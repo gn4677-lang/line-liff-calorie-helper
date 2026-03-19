@@ -3,6 +3,7 @@
 Source of truth for frontend and interaction work on the LINE + LIFF calorie helper.
 
 - Product baseline: [product-spec-v1.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/product-spec-v1.md)
+- Memory design: [memory-onboarding-v2.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/memory-onboarding-v2.md)
 - Execution checklist: [TODO.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/TODO.md)
 - Architecture: [architecture.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/architecture.md)
 - Current frontend shell: [App.tsx](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/frontend/src/App.tsx)
@@ -17,24 +18,26 @@ Source of truth for frontend and interaction work on the LINE + LIFF calorie hel
 - Attachments are stored in Supabase Storage.
 - LINE webhook is implemented.
 - LIFF auth is implemented with real ID token verification.
-- Frontend is currently a functional shell, not a polished product UI.
+- Cold-start onboarding and memory APIs now exist.
+- Frontend is still a prototype shell and should be upgraded.
 
 ## Frontend Goal
 
-Antigravity should treat the current frontend as a working prototype and replace it with a stronger product-quality LIFF experience.
+Treat the current frontend as a working prototype and replace it with a stronger product-quality LIFF experience.
 
-The design target is not "generic dashboard". It should feel like:
+The target is not a generic dashboard. It should feel like:
 
 - a daily cockpit for calorie decisions
 - a fast meal logging surface
 - a low-anxiety coach for uncertain food logging
 - a narrow recommendation engine that helps decide what to eat now
+- a light-touch onboarding flow that seeds the system without feeling like setup ceremony
 
-The UI should preserve the existing product structure:
+The product structure must stay:
 
-- `Progress`
-- `Today`
-- `Eat`
+- `體重熱量`
+- `今日紀錄`
+- `食物推薦`
 
 ## Non-Negotiable Constraints
 
@@ -48,16 +51,17 @@ The UI should preserve the existing product structure:
 - Assume this runs inside LIFF first, desktop browser second.
 - Optimize for mobile-first interaction density.
 - Preserve the 3-page information architecture from the spec.
+- Keep onboarding answers and corrections simple, structured, and easy to revise later.
 
 ## Required Screens
 
-### 1. Progress
+### 1. 體重熱量
 
 Purpose:
-- answer "am I on track?"
+- answer “am I on track?”
 
 Must show:
-- today's weight entry or latest weight
+- latest weight entry
 - 7-day average
 - 14-day direction
 - daily calorie target
@@ -67,10 +71,10 @@ Interaction notes:
 - weight logging should be extremely short
 - single-day fluctuations should not feel alarming
 
-### 2. Today
+### 2. 今日紀錄
 
 Purpose:
-- answer "what did I eat, how much is left, what should I do next?"
+- answer “what did I eat, how much is left, what should I do next?”
 
 Must show:
 - current day summary
@@ -84,24 +88,25 @@ Must show:
 
 Interaction notes:
 - this is the main daily cockpit
-- clarification should feel like a compact conversational step, not a big form
+- clarification should feel like a compact conversational step, not a form wizard
 - draft should feel temporary and easy to finish
 
-### 3. Eat
+### 3. 食物推薦
 
 Purpose:
-- answer "what can I eat right now?"
+- answer “what can I eat right now?”
 
 Must show:
 - grouped recommendations
 - day plan
 - compensation options
+- optional explainability entry or inline factors
 
 Interaction notes:
 - recommendation groups should be visually distinct
-- should privilege "few useful options" over "large list"
+- privilege a few usable options over a large searchable list
 
-## Key Flows To Design
+## Required Flows
 
 ### Boot Flow
 
@@ -110,13 +115,27 @@ Interaction notes:
 3. Initialize LIFF
 4. If not logged in, LIFF login redirect
 5. If logged in, fetch `GET /api/me` with `X-Line-Id-Token`
-6. Load summary and recommendations
+6. Load onboarding state, summary, recommendations
 
 States needed:
 - booting
 - auth failed
 - authenticated and loading data
 - ready
+
+### Cold Start Flow
+
+1. Load `GET /api/onboarding-state`
+2. If `should_show = true`, show a 5-question onboarding card
+3. Submit to `POST /api/preferences/onboarding`
+4. Or skip via `POST /api/onboarding/skip`
+5. Refresh recommendation and planning surfaces
+
+States needed:
+- unseen
+- answering
+- skipped
+- completed
 
 ### Meal Logging Flow
 
@@ -128,188 +147,116 @@ States needed:
 6. `POST /api/intake/{draft_id}/confirm`
 7. Refresh summary and recommendations
 
-States needed:
-- idle
-- estimating
-- clarifying
-- ready to confirm
-- confirmed
-- error
+### Preference Correction Flow
 
-### Weight Logging Flow
-
-1. User enters weight
-2. `POST /api/weights`
-3. Refresh summary area
-
-### Recommendation Flow
-
-1. Load `GET /api/recommendations`
-2. Group by recommendation group
-3. Render concise cards
+1. User opens settings or taps a correction surface
+2. Load `GET /api/preferences`
+3. Submit changes to `POST /api/preferences/correction`
+4. Refresh recommendation and planning views
 
 ## API Contracts Antigravity Should Assume
 
-### `GET /api/client-config`
-
-Response:
+### `GET /api/onboarding-state`
 
 ```json
 {
-  "liff_id": "2009526305-adlzUvHT",
-  "auth_required": true
-}
-```
-
-### `GET /api/me`
-
-Headers:
-
-```text
-X-Line-Id-Token: <liff id token>
-```
-
-Response:
-
-```json
-{
-  "line_user_id": "Uxxxx",
-  "display_name": "User Name",
-  "daily_calorie_target": 1800,
-  "provider": "heuristic",
-  "now": "2026-03-19T04:43:57.834294Z"
-}
-```
-
-### `GET /api/day-summary`
-
-Response shape:
-
-```json
-{
-  "coach_message": "string",
-  "summary": {
-    "date": "2026-03-19",
-    "target_kcal": 1800,
-    "consumed_kcal": 650,
-    "remaining_kcal": 1150,
-    "logs": [],
-    "seven_day_average_weight": 72.1,
-    "fourteen_day_direction": "down",
-    "target_adjustment_hint": "Keep current target for now."
+  "should_show": true,
+  "completed": false,
+  "skipped": false,
+  "version": "v1",
+  "preferences": {
+    "breakfast_habit": "variable",
+    "carb_need": "flexible",
+    "dinner_style": "normal",
+    "hard_dislikes": [],
+    "compensation_style": "let_system_decide"
   }
 }
 ```
 
-### `POST /api/intake`
-
-Request:
+### `POST /api/preferences/onboarding`
 
 ```json
 {
-  "text": "雞胸便當加半碗飯",
-  "meal_type": "lunch",
-  "mode": "standard",
-  "source_mode": "text",
-  "attachments": []
+  "breakfast_habit": "rare",
+  "carb_need": "flexible",
+  "dinner_style": "high_protein",
+  "hard_dislikes": ["韓式"],
+  "compensation_style": "gentle_1d"
 }
 ```
 
-Response shape:
+### `GET /api/preferences`
 
 ```json
 {
-  "coach_message": "string",
-  "draft": {
-    "id": "uuid",
-    "date": "2026-03-19",
-    "meal_type": "lunch",
-    "status": "awaiting_clarification",
-    "source_mode": "text",
-    "mode": "standard",
-    "parsed_items": [],
-    "missing_slots": [],
-    "followup_question": "飯大概吃幾成？",
-    "estimate_kcal": 540,
-    "kcal_low": 460,
-    "kcal_high": 650,
-    "confidence": 0.72,
-    "uncertainty_note": "portion is still uncertain"
-  }
+  "breakfast_habit": "rare",
+  "carb_need": "flexible",
+  "dinner_style": "high_protein",
+  "hard_dislikes": ["韓式"],
+  "compensation_style": "gentle_1d"
 }
 ```
 
-### `POST /api/intake/{draft_id}/clarify`
+### `POST /api/preferences/correction`
 
-Request:
-
-```json
-{
-  "answer": "飯吃一半，雞胸有吃完"
-}
-```
-
-### `POST /api/intake/{draft_id}/confirm`
-
-Request:
+Partial update:
 
 ```json
 {
-  "force_confirm": false
+  "breakfast_habit": "regular",
+  "correction_note": "我最近開始吃早餐了"
 }
 ```
 
 ### `GET /api/recommendations`
 
-Response shape:
+Each item now supports:
 
 ```json
 {
-  "coach_message": "string",
-  "recommendations": {
-    "remaining_kcal": 1150,
-    "items": [
-      {
-        "name": "Subway 6-inch chicken",
-        "meal_types": ["lunch", "dinner"],
-        "kcal_low": 350,
-        "kcal_high": 450,
-        "group": "最穩",
-        "reason": "high protein, easy to estimate",
-        "external_links": [],
-        "is_favorite": true,
-        "is_golden": true
-      }
-    ]
-  }
-}
-```
-
-### `POST /api/weights`
-
-Request:
-
-```json
-{
-  "weight": 72.4
+  "name": "雞胸便當",
+  "group": "高蛋白優先",
+  "reason": "蛋白質密度較高，通常更適合減脂期的主力選擇。",
+  "reason_factors": [
+    "晚餐你通常比較接受高蛋白選項。",
+    "這個選項的蛋白質密度比較高。"
+  ]
 }
 ```
 
 ### `POST /api/plans/day`
 
-Request:
+Response now supports:
 
 ```json
-{}
+{
+  "plan": {
+    "allocations": {
+      "breakfast": 180,
+      "lunch": 630,
+      "dinner": 720,
+      "flex": 270
+    },
+    "reason_factors": [
+      "你最近早餐通常吃得比較少，所以把熱量額度往午晚餐和彈性空間移。"
+    ]
+  }
+}
 ```
 
 ### `POST /api/plans/compensation`
 
-Request:
+Response now supports:
 
 ```json
 {
-  "expected_extra_kcal": 600
+  "compensation": {
+    "options": [],
+    "reason_factors": [
+      "你偏向不要做激烈補償，所以先以回到正常軌道為主。"
+    ]
+  }
 }
 ```
 
@@ -322,6 +269,7 @@ Avoid:
 - dense tables
 - long forms for meal logging
 - too many recommendation items
+- onboarding that feels like profile setup ceremony
 
 Prefer:
 
@@ -329,6 +277,8 @@ Prefer:
 - strong hierarchy around remaining calories
 - draft card that feels conversational
 - grouped recommendation blocks with distinct visual tone
+- onboarding that feels short, useful, and skippable
+- preference correction surfaces that feel lightweight rather than settings-heavy
 - subtle but intentional motion
 - a visual direction that feels personal and coach-like rather than enterprise
 
@@ -342,6 +292,8 @@ Antigravity can safely change:
 - page layout
 - interaction design
 - loading, error, empty states
+- onboarding UI
+- explainability presentation
 
 Antigravity should not change without coordinating:
 
@@ -349,22 +301,18 @@ Antigravity should not change without coordinating:
 - backend endpoint names
 - request and response field names
 - webhook assumptions
+- memory source priority rules
 - database schema assumptions
 
 ## Acceptance Bar For Frontend Revision
 
 - LIFF opens and authenticates without extra manual steps
+- onboarding is understandable in under 20 seconds and skippable
 - first screen clearly shows remaining calories
 - logging a meal feels possible in under 30 seconds
 - clarification flow feels compact and non-annoying
 - recommendation screen feels actionable, not informational
+- explainability is available but not noisy
+- preference correction is easy to find and easy to trust
 - UI works on common mobile widths inside LINE
 - no secrets are exposed in frontend
-
-## Recommended Working Strategy For Antigravity
-
-1. Read [product-spec-v1.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/product-spec-v1.md) for product intent.
-2. Read [App.tsx](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/frontend/src/App.tsx) only to understand current API usage and LIFF boot flow.
-3. Preserve the boot/auth/API logic.
-4. Replace the current UI shell with a stronger componentized frontend.
-5. Keep production deploy target unchanged.

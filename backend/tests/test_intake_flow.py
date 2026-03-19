@@ -1,5 +1,5 @@
 def test_text_intake_and_confirm(client):
-    intake = client.post("/api/intake", json={"text": "雞胸便當 半飯 無糖豆漿", "mode": "standard"})
+    intake = client.post("/api/intake", json={"text": "雞胸便當 半碗飯", "mode": "standard"})
     assert intake.status_code == 200
     payload = intake.json()
     assert payload["draft"]["estimate_kcal"] > 0
@@ -15,7 +15,7 @@ def test_clarification_flow(client):
     payload = intake.json()
     assert payload["draft"]["status"] == "awaiting_clarification"
 
-    clarify = client.post(f"/api/intake/{payload['draft']['id']}/clarify", json={"answer": "雞腿飯，飯半碗，有滷蛋"})
+    clarify = client.post(f"/api/intake/{payload['draft']['id']}/clarify", json={"answer": "雞腿便當，飯吃一半，菜有吃完"})
     assert clarify.status_code == 200
     followup = clarify.json()
     assert followup["draft"]["estimate_kcal"] > 0

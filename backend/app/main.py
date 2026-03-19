@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from .api.routes import router
 from .config import settings
 from .database import Base, engine
+from .schema_sync import ensure_runtime_schema
 
 
 app = FastAPI(title=settings.app_name)
@@ -26,6 +27,7 @@ app.include_router(router)
 @app.on_event("startup")
 def on_startup() -> None:
     Base.metadata.create_all(bind=engine)
+    ensure_runtime_schema(engine)
 
 
 frontend_dist = Path(settings.frontend_dist_dir)

@@ -4,12 +4,11 @@ from datetime import date, datetime, timezone
 import re
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, UploadFile
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from ..models import MealDraft, MealLog, Preference, WeightLog
+from ..models import MealDraft, MealLog, Food, WeightLog
 from ..providers.factory import get_ai_provider
 from ..schemas import (
     ClarifyRequest,
@@ -18,14 +17,38 @@ from ..schemas import (
     IntakeRequest,
     MeResponse,
     MealEditRequest,
+    MemoryProfileResponse,
+    OnboardingPreferencesRequest,
+    OnboardingStateResponse,
     PlanRequest,
+    PreferenceCorrectionRequest,
+    PreferenceResponse,
     PreferencesUpdateRequest,
     StandardResponse,
     WeightLogRequest,
 )
 from ..services.auth import get_or_create_user, verify_liff_id_token
-from ..services.intake import confirm_draft, create_or_update_draft, draft_to_response, edit_log, infer_meal_type, log_to_response, update_draft_with_clarification
+from ..services.intake import (
+    confirm_draft,
+    create_or_update_draft,
+    draft_to_response,
+    edit_log,
+    infer_meal_type,
+    log_to_response,
+    update_draft_with_clarification,
+)
 from ..services.line import fetch_line_content, reply_line_message, verify_line_signature
+from ..services.memory import (
+    apply_onboarding_preferences,
+    apply_preference_correction,
+    build_memory_profile,
+    build_onboarding_state,
+    detect_chat_correction,
+    get_or_create_preferences,
+    mark_onboarding_skipped,
+    preference_to_response,
+    synthesize_hypotheses,
+)
 from ..services.planning import build_compensation_plan, build_day_plan
 from ..services.recommendations import get_recommendations
 from ..services.storage import attachment_for_persistence, store_attachment_bytes
@@ -56,6 +79,7 @@ async def current_user(
 
     if settings.allowlist_line_user_id and line_user_id != settings.allowlist_line_user_id:
         raise HTTPException(status_code=403, detail="User is not allowlisted")
+
     return get_or_create_user(db, line_user_id=line_user_id, display_name=display_name)
 
 
@@ -83,6 +107,78 @@ def me(user=Depends(current_user)) -> MeResponse:
     )
 
 
+@router.get(f"{settings.api_prefix}/onboarding-state", response_model=OnboardingStateResponse)
+def onboarding_state(db: Session = Depends(get_db), user=Depends(current_user)) -> OnboardingStateResponse:
+    preference = get_or_create_preferences(db, user)
+    return build_onboarding_state(user, preference)
+
+
+@router.post(f"{settings.api_prefix}/onboarding/skip", response_model=OnboardingStateResponse)
+def onboarding_skip(db: Session = Depends(get_db), user=Depends(current_user)) -> OnboardingStateResponse:
+    mark_onboarding_skipped(db, user)
+    preference = get_or_create_preferences(db, user)
+    return build_onboarding_state(user, preference)
+
+
+@router.post(f"{settings.api_prefix}/preferences/onboarding", response_model=StandardResponse)
+def onboarding_preferences(
+    request: OnboardingPreferencesRequest,
+    db: Session = Depends(get_db),
+    user=Depends(current_user),
+) -> StandardResponse:
+    preference = apply_onboarding_preferences(db, user, request)
+    return StandardResponse(
+        coach_message="冷啟動設定已完成，接下來推薦、規劃和追問會更貼近你的習慣。",
+        payload={
+            "preferences": preference_to_response(preference).model_dump(),
+            "onboarding_state": build_onboarding_state(user, preference).model_dump(),
+        },
+    )
+
+
+@router.get(f"{settings.api_prefix}/preferences", response_model=PreferenceResponse)
+def get_preferences(db: Session = Depends(get_db), user=Depends(current_user)) -> PreferenceResponse:
+    preference = get_or_create_preferences(db, user)
+    return preference_to_response(preference)
+
+
+@router.post(f"{settings.api_prefix}/preferences/correction", response_model=StandardResponse)
+def correct_preferences(
+    request: PreferenceCorrectionRequest,
+    db: Session = Depends(get_db),
+    user=Depends(current_user),
+) -> StandardResponse:
+    preference = apply_preference_correction(db, user, request)
+    return StandardResponse(
+        coach_message="偏好已更新，之後推薦和規劃會優先採用這次修正。",
+        payload={"preferences": preference_to_response(preference).model_dump()},
+    )
+
+
+@router.post(f"{settings.api_prefix}/preferences", response_model=StandardResponse)
+def update_preferences(
+    request: PreferencesUpdateRequest,
+    db: Session = Depends(get_db),
+    user=Depends(current_user),
+) -> StandardResponse:
+    preference = get_or_create_preferences(db, user)
+    for field, value in request.model_dump(exclude_none=True).items():
+        setattr(preference, field, value)
+    db.add(preference)
+    db.commit()
+    db.refresh(preference)
+    synthesize_hypotheses(db, user, force_user_stated=True)
+    return StandardResponse(
+        coach_message="偏好設定已更新。",
+        payload={"preferences": preference_to_response(preference).model_dump()},
+    )
+
+
+@router.get(f"{settings.api_prefix}/memory/profile", response_model=MemoryProfileResponse)
+def memory_profile(db: Session = Depends(get_db), user=Depends(current_user)) -> MemoryProfileResponse:
+    return build_memory_profile(db, user)
+
+
 @router.post(f"{settings.api_prefix}/intake", response_model=StandardResponse)
 async def intake(request: IntakeRequest, db: Session = Depends(get_db), user=Depends(current_user)) -> StandardResponse:
     provider = get_ai_provider()
@@ -95,15 +191,24 @@ async def intake(request: IntakeRequest, db: Session = Depends(get_db), user=Dep
         attachments=request.attachments,
     )
     draft = create_or_update_draft(db, user, request, estimate)
-    message = "先幫你抓到這樣。" if draft.status == "ready_to_confirm" else (draft.followup_question or "我還需要補一點資訊。")
+    if draft.status == "ready_to_confirm":
+        message = "這筆紀錄已經可以確認。"
+    else:
+        message = draft.followup_question or "我先做了初估，如果你願意，可以再補一點份量資訊。"
     return StandardResponse(coach_message=message, draft=draft_to_response(draft))
 
 
 @router.post(f"{settings.api_prefix}/intake/{{draft_id}}/clarify", response_model=StandardResponse)
-async def clarify(draft_id: str, request: ClarifyRequest, db: Session = Depends(get_db), user=Depends(current_user)) -> StandardResponse:
+async def clarify(
+    draft_id: str,
+    request: ClarifyRequest,
+    db: Session = Depends(get_db),
+    user=Depends(current_user),
+) -> StandardResponse:
     draft = db.get(MealDraft, draft_id)
     if not draft or draft.user_id != user.id:
         raise HTTPException(status_code=404, detail="Draft not found")
+
     provider = get_ai_provider()
     estimate = await provider.estimate_meal(
         text=f"{draft.raw_input_text}\n補充：{request.answer}",
@@ -114,7 +219,10 @@ async def clarify(draft_id: str, request: ClarifyRequest, db: Session = Depends(
         attachments=draft.attachments,
     )
     draft = update_draft_with_clarification(db, draft, request.answer, estimate)
-    message = "補充後這樣比較可信。" if draft.status == "ready_to_confirm" else (draft.followup_question or "我還差一點資訊。")
+    if draft.status == "ready_to_confirm":
+        message = "補充收到，這筆紀錄現在可以確認。"
+    else:
+        message = draft.followup_question or "補充收到，我先用這份資訊繼續收斂估算。"
     return StandardResponse(coach_message=message, draft=draft_to_response(draft))
 
 
@@ -125,16 +233,27 @@ def confirm(draft_id: str, request: ConfirmRequest, db: Session = Depends(get_db
         raise HTTPException(status_code=404, detail="Draft not found")
     if draft.status == "awaiting_clarification" and not request.force_confirm:
         raise HTTPException(status_code=409, detail="Draft still needs clarification")
+
     log = confirm_draft(db, user, draft)
     summary = build_day_summary(db, user, log.date)
-    return StandardResponse(coach_message="已記錄這餐，今天剩餘熱量也更新了。", log=log_to_response(log), summary=summary)
+    return StandardResponse(
+        coach_message="已記錄這餐，今天的熱量總覽也同步更新了。",
+        log=log_to_response(log),
+        summary=summary,
+    )
 
 
 @router.patch(f"{settings.api_prefix}/meal-logs/{{log_id}}", response_model=StandardResponse)
-async def patch_log(log_id: int, request: MealEditRequest, db: Session = Depends(get_db), user=Depends(current_user)) -> StandardResponse:
+async def patch_log(
+    log_id: int,
+    request: MealEditRequest,
+    db: Session = Depends(get_db),
+    user=Depends(current_user),
+) -> StandardResponse:
     log = db.get(MealLog, log_id)
     if not log or log.user_id != user.id:
         raise HTTPException(status_code=404, detail="Meal log not found")
+
     provider = get_ai_provider()
     estimate = await provider.estimate_meal(
         text=request.description_raw,
@@ -146,7 +265,11 @@ async def patch_log(log_id: int, request: MealEditRequest, db: Session = Depends
     )
     log = edit_log(db, log, estimate, request.description_raw)
     summary = build_day_summary(db, user, log.date)
-    return StandardResponse(coach_message="這筆紀錄已更新。", log=log_to_response(log), summary=summary)
+    return StandardResponse(
+        coach_message="這筆紀錄已重新估算，今日總覽也一起更新。",
+        log=log_to_response(log),
+        summary=summary,
+    )
 
 
 @router.get(f"{settings.api_prefix}/day-summary", response_model=StandardResponse)
@@ -168,37 +291,25 @@ def add_weight(request: WeightLogRequest, db: Session = Depends(get_db), user=De
 def recommendations(meal_type: str | None = None, db: Session = Depends(get_db), user=Depends(current_user)) -> StandardResponse:
     summary = build_day_summary(db, user, date.today())
     recs = get_recommendations(db, user, meal_type, summary.remaining_kcal)
-    return StandardResponse(coach_message="先給你少量可行選項。", recommendations=recs, summary=summary)
+    return StandardResponse(coach_message="這些是目前比較可行的吃法。", recommendations=recs, summary=summary)
 
 
 @router.post(f"{settings.api_prefix}/plans/day", response_model=StandardResponse)
-def plan_day(request: PlanRequest, user=Depends(current_user)) -> StandardResponse:
-    plan = build_day_plan(user.daily_calorie_target)
+def plan_day(request: PlanRequest, db: Session = Depends(get_db), user=Depends(current_user)) -> StandardResponse:
+    preference = get_or_create_preferences(db, user)
+    plan = build_day_plan(user.daily_calorie_target, preference)
     return StandardResponse(coach_message=plan.coach_message, plan=plan)
 
 
 @router.post(f"{settings.api_prefix}/plans/compensation", response_model=StandardResponse)
-def plan_compensation(request: PlanRequest) -> StandardResponse:
-    compensation = build_compensation_plan(request.expected_extra_kcal)
+def plan_compensation(request: PlanRequest, db: Session = Depends(get_db), user=Depends(current_user)) -> StandardResponse:
+    preference = get_or_create_preferences(db, user)
+    compensation = build_compensation_plan(request.expected_extra_kcal, preference.compensation_style)
     return StandardResponse(coach_message=compensation.coach_message, compensation=compensation)
-
-
-@router.post(f"{settings.api_prefix}/preferences", response_model=StandardResponse)
-def update_preferences(request: PreferencesUpdateRequest, db: Session = Depends(get_db), user=Depends(current_user)) -> StandardResponse:
-    preference = db.scalar(select(Preference).where(Preference.user_id == user.id))
-    if not preference:
-        preference = Preference(user_id=user.id)
-    for field, value in request.model_dump(exclude_none=True).items():
-        setattr(preference, field, value)
-    db.add(preference)
-    db.commit()
-    return StandardResponse(coach_message="偏好已更新。", payload={"preferences": request.model_dump(exclude_none=True)})
 
 
 @router.post(f"{settings.api_prefix}/foods/{{food_id}}/favorite", response_model=StandardResponse)
 def toggle_favorite(food_id: int, db: Session = Depends(get_db), user=Depends(current_user)) -> StandardResponse:
-    from ..models import Food
-
     food = db.get(Food, food_id)
     if not food or food.user_id != user.id:
         raise HTTPException(status_code=404, detail="Food not found")
@@ -208,16 +319,13 @@ def toggle_favorite(food_id: int, db: Session = Depends(get_db), user=Depends(cu
     db.add(food)
     db.commit()
     return StandardResponse(
-        coach_message="已更新常用 / 黃金選項狀態。",
+        coach_message="常用 / 黃金選項狀態已更新。",
         payload={"food_id": food.id, "is_favorite": food.is_favorite, "is_golden": food.is_golden},
     )
 
 
 @router.post(f"{settings.api_prefix}/attachments", response_model=StandardResponse)
-async def upload_attachment(
-    file: UploadFile = File(...),
-    user=Depends(current_user),
-) -> StandardResponse:
+async def upload_attachment(file: UploadFile = File(...), user=Depends(current_user)) -> StandardResponse:
     content = await file.read()
     source_type = "image" if (file.content_type or "").startswith("image/") else "audio" if (file.content_type or "").startswith("audio/") else "file"
     attachment = store_attachment_bytes(
@@ -228,7 +336,7 @@ async def upload_attachment(
         user_scope=user.line_user_id,
     )
     return StandardResponse(
-        coach_message="附件已上傳到 Supabase Storage",
+        coach_message="附件已上傳到 Supabase Storage。",
         payload={"attachment": attachment_for_persistence(attachment), "signed_url": attachment.get("signed_url")},
     )
 
@@ -252,29 +360,40 @@ async def line_webhook(request: Request, db: Session = Depends(get_db)) -> dict[
 
         if message_type == "text":
             text = message.get("text", "")
-            weight_match = re.search(r"(體重|weight)\s*([0-9]+(?:\.[0-9]+)?)", text, re.IGNORECASE)
-            if weight_match:
-                db.add(WeightLog(user_id=user.id, date=date.today(), weight=float(weight_match.group(2))))
-                db.commit()
-                reply_text = "體重已記錄。"
-            elif "推薦" in text:
-                summary = build_day_summary(db, user, date.today())
-                recs = get_recommendations(db, user, None, summary.remaining_kcal)
-                reply_text = "現在可行選項：\n" + "\n".join([f"- {item.name} ({item.kcal_low}-{item.kcal_high} kcal)" for item in recs.items[:3]])
-            elif "剩" in text and "熱量" in text:
-                summary = build_day_summary(db, user, date.today())
-                reply_text = f"今天已吃 {summary.consumed_kcal} kcal，還剩 {summary.remaining_kcal} kcal。"
+            correction = detect_chat_correction(text)
+            if correction:
+                apply_preference_correction(db, user, correction)
+                reply_text = "偏好已更新，之後我會照這次修正來推薦。"
             else:
-                estimate = await provider.estimate_meal(
-                    text=text,
-                    meal_type=infer_meal_type(text),
-                    mode="standard",
-                    source_mode="text",
-                    clarification_count=0,
-                    attachments=[],
-                )
-                draft = create_or_update_draft(db, user, IntakeRequest(text=text, meal_type=infer_meal_type(text)), estimate)
-                reply_text = draft.followup_question or f"先估 {draft.estimate_kcal} kcal，可用 LIFF 或 API 確認這筆紀錄。"
+                weight_match = re.search(r"(體重|weight)\s*([0-9]+(?:\.[0-9]+)?)", text, re.IGNORECASE)
+                if weight_match:
+                    db.add(WeightLog(user_id=user.id, date=date.today(), weight=float(weight_match.group(2))))
+                    db.commit()
+                    reply_text = "體重已記錄。"
+                elif "剩多少" in text or "今天還剩" in text:
+                    summary = build_day_summary(db, user, date.today())
+                    reply_text = f"今天已吃 {summary.consumed_kcal} kcal，還剩 {summary.remaining_kcal} kcal。"
+                elif "吃什麼" in text or "推薦" in text:
+                    summary = build_day_summary(db, user, date.today())
+                    recs = get_recommendations(db, user, None, summary.remaining_kcal)
+                    lines = [f"- {item.name} ({item.kcal_low}-{item.kcal_high} kcal)" for item in recs.items[:3]]
+                    reply_text = "現在比較可行的選項有：\n" + "\n".join(lines)
+                else:
+                    estimate = await provider.estimate_meal(
+                        text=text,
+                        meal_type=infer_meal_type(text),
+                        mode="standard",
+                        source_mode="text",
+                        clarification_count=0,
+                        attachments=[],
+                    )
+                    draft = create_or_update_draft(
+                        db,
+                        user,
+                        IntakeRequest(text=text, meal_type=infer_meal_type(text), source_mode="text"),
+                        estimate,
+                    )
+                    reply_text = draft.followup_question or f"我先估這餐大約 {draft.estimate_kcal} kcal。你也可以到 LIFF 裡確認。"
 
         elif message_type in {"image", "audio"}:
             content, attachment = await fetch_line_content(message["id"], line_user_id=user.line_user_id)
@@ -297,7 +416,7 @@ async def line_webhook(request: Request, db: Session = Depends(get_db)) -> dict[
                 IntakeRequest(text=transcript, meal_type="meal", source_mode=source_mode, attachments=[attachment]),
                 estimate,
             )
-            reply_text = draft.followup_question or f"先幫你粗估 {draft.estimate_kcal} kcal，請打開 LIFF 或呼叫 confirm API 確認。"
+            reply_text = draft.followup_question or f"我先估這餐大約 {draft.estimate_kcal} kcal。細節可以到 LIFF 裡確認。"
 
         if reply_token:
             await reply_line_message(reply_token, reply_text)

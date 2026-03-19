@@ -4,6 +4,27 @@
   padding: 32px 20px 64px;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 20, 18, 0.55);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  z-index: 20;
+}
+
+.modal-card {
+  width: min(680px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  background: #fff8f0;
+  border: 1px solid rgba(104, 66, 39, 0.14);
+  border-radius: 24px;
+  box-shadow: 0 28px 56px rgba(45, 31, 19, 0.2);
+  padding: 24px;
+}
+
 .hero {
   display: grid;
   grid-template-columns: 1fr minmax(220px, 280px);
@@ -146,6 +167,16 @@ button.ghost {
   color: #6a4a32;
 }
 
+.chip-button {
+  background: rgba(83, 62, 44, 0.08);
+  color: #533e2c;
+}
+
+.chip-button.selected {
+  background: #533e2c;
+  color: #fff7ef;
+}
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -198,6 +229,14 @@ button.ghost {
   background: rgba(255, 255, 255, 0.82);
   border-radius: 16px;
   padding: 14px;
+  display: grid;
+  gap: 4px;
+}
+
+.factor-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: #6a4a32;
   display: grid;
   gap: 4px;
 }
