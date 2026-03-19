@@ -43,9 +43,9 @@ def create_image(output_path: Path) -> None:
     draw = ImageDraw.Draw(image)
 
     sections = [
-        ("Today", "Log meals and track remaining kcal", "#d0f1de"),
-        ("Progress", "Weight trend and target check", "#f7edc7"),
-        ("Eat", "Recommendations and next move", "#f6d5c4"),
+        ("今日紀錄", "記錄、補問、確認今日熱量", "#d0f1de"),
+        ("體重熱量", "看趨勢、目標與剩餘熱量", "#f7edc7"),
+        ("食物推薦", "現在可以吃什麼", "#f6d5c4"),
     ]
 
     title_font = load_font(124)
@@ -82,15 +82,15 @@ def create_rich_menu(access_token: str, liff_id: str) -> str:
         "areas": [
             {
                 "bounds": {"x": 0, "y": 0, "width": 833, "height": 1686},
-                "action": {"type": "uri", "label": "Today", "uri": f"https://liff.line.me/{liff_id}?tab=today"},
+                "action": {"type": "uri", "label": "今日紀錄", "uri": f"https://liff.line.me/{liff_id}?tab=today"},
             },
             {
                 "bounds": {"x": 833, "y": 0, "width": 834, "height": 1686},
-                "action": {"type": "uri", "label": "Progress", "uri": f"https://liff.line.me/{liff_id}?tab=progress"},
+                "action": {"type": "uri", "label": "體重熱量", "uri": f"https://liff.line.me/{liff_id}?tab=progress"},
             },
             {
                 "bounds": {"x": 1667, "y": 0, "width": 833, "height": 1686},
-                "action": {"type": "uri", "label": "Eat", "uri": f"https://liff.line.me/{liff_id}?tab=eat"},
+                "action": {"type": "uri", "label": "食物推薦", "uri": f"https://liff.line.me/{liff_id}?tab=eat"},
             },
         ],
     }

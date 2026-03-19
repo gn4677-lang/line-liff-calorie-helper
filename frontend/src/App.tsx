@@ -68,6 +68,11 @@ type AuthState =
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 const TAB_KEYS = ['today', 'progress', 'eat'] as const
 type TabKey = (typeof TAB_KEYS)[number]
+const TAB_LABELS: Record<TabKey, string> = {
+  today: '今日紀錄',
+  progress: '體重熱量',
+  eat: '食物推薦',
+}
 
 function resolveInitialTab(): TabKey {
   const tab = new URLSearchParams(window.location.search).get('tab')
@@ -374,9 +379,9 @@ function App() {
       </header>
 
       <nav className="tabs">
-        <button className={activeTab === 'today' ? 'active' : ''} onClick={() => setActiveTab('today')}>Today</button>
-        <button className={activeTab === 'progress' ? 'active' : ''} onClick={() => setActiveTab('progress')}>Progress</button>
-        <button className={activeTab === 'eat' ? 'active' : ''} onClick={() => setActiveTab('eat')}>Eat</button>
+        <button className={activeTab === 'today' ? 'active' : ''} onClick={() => setActiveTab('today')}>{TAB_LABELS.today}</button>
+        <button className={activeTab === 'progress' ? 'active' : ''} onClick={() => setActiveTab('progress')}>{TAB_LABELS.progress}</button>
+        <button className={activeTab === 'eat' ? 'active' : ''} onClick={() => setActiveTab('eat')}>{TAB_LABELS.eat}</button>
       </nav>
 
       {activeTab === 'today' && (
