@@ -66,6 +66,16 @@ type AuthState =
   | { status: 'error'; message: string; headers: Record<string, string> }
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+const TAB_KEYS = ['today', 'progress', 'eat'] as const
+type TabKey = (typeof TAB_KEYS)[number]
+
+function resolveInitialTab(): TabKey {
+  const tab = new URLSearchParams(window.location.search).get('tab')
+  if (tab && TAB_KEYS.includes(tab as TabKey)) {
+    return tab as TabKey
+  }
+  return 'today'
+}
 
 async function api<T>(path: string, authHeaders: Record<string, string>, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -91,7 +101,7 @@ function App() {
     message: 'Booting LIFF session...',
     headers: {},
   })
-  const [activeTab, setActiveTab] = useState<'today' | 'progress' | 'eat'>('today')
+  const [activeTab, setActiveTab] = useState<TabKey>(() => resolveInitialTab())
   const [text, setText] = useState('')
   const [mealType, setMealType] = useState('lunch')
   const [mode, setMode] = useState('standard')
