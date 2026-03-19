@@ -11,6 +11,11 @@ backend/data/
 .env.test.local
 .env.production.local
 .vercel/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
 .DS_Store
 Thumbs.db
 npm-debug.log*
