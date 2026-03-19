@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     allowlist_line_user_id: Optional[str] = None
 
     line_channel_id: Optional[str] = None
+    line_login_channel_id: Optional[str] = None
     line_channel_secret: Optional[str] = None
     line_channel_access_token: Optional[str] = None
     liff_channel_id: Optional[str] = None

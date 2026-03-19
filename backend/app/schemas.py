@@ -131,6 +131,11 @@ class MeResponse(BaseModel):
     now: datetime
 
 
+class ClientConfigResponse(BaseModel):
+    liff_id: Optional[str] = None
+    auth_required: bool
+
+
 class StandardResponse(BaseModel):
     coach_message: str
     draft: Optional[DraftResponse] = None

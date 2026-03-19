@@ -13,6 +13,7 @@ from ..models import MealDraft, MealLog, Preference, WeightLog
 from ..providers.factory import get_ai_provider
 from ..schemas import (
     ClarifyRequest,
+    ClientConfigResponse,
     ConfirmRequest,
     IntakeRequest,
     MeResponse,
@@ -22,7 +23,7 @@ from ..schemas import (
     StandardResponse,
     WeightLogRequest,
 )
-from ..services.auth import get_or_create_user
+from ..services.auth import get_or_create_user, verify_liff_id_token
 from ..services.intake import confirm_draft, create_or_update_draft, draft_to_response, edit_log, infer_meal_type, log_to_response, update_draft_with_clarification
 from ..services.line import fetch_line_content, reply_line_message, verify_line_signature
 from ..services.planning import build_compensation_plan, build_day_plan
@@ -34,20 +35,41 @@ from ..services.summary import build_day_summary
 router = APIRouter()
 
 
-def current_user(
+async def current_user(
     db: Session = Depends(get_db),
     x_line_user_id: str | None = Header(default=None),
     x_display_name: str | None = Header(default=None),
+    x_line_id_token: str | None = Header(default=None),
 ):
-    line_user_id = x_line_user_id or settings.default_user_id
+    if x_line_id_token:
+        identity = await verify_liff_id_token(x_line_id_token)
+        line_user_id = identity.line_user_id
+        display_name = identity.display_name
+    elif x_line_user_id:
+        line_user_id = x_line_user_id
+        display_name = x_display_name or "Demo User"
+    elif settings.environment != "production":
+        line_user_id = settings.default_user_id
+        display_name = x_display_name or "Demo User"
+    else:
+        raise HTTPException(status_code=401, detail="LINE authentication is required")
+
     if settings.allowlist_line_user_id and line_user_id != settings.allowlist_line_user_id:
         raise HTTPException(status_code=403, detail="User is not allowlisted")
-    return get_or_create_user(db, line_user_id=line_user_id, display_name=x_display_name or "Demo User")
+    return get_or_create_user(db, line_user_id=line_user_id, display_name=display_name)
 
 
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get(f"{settings.api_prefix}/client-config", response_model=ClientConfigResponse)
+def client_config() -> ClientConfigResponse:
+    return ClientConfigResponse(
+        liff_id=settings.liff_channel_id,
+        auth_required=settings.environment == "production" and bool(settings.liff_channel_id),
+    )
 
 
 @router.get(f"{settings.api_prefix}/me", response_model=MeResponse)

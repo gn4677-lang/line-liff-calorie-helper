@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
+import liff from '@line/liff'
 import './App.css'
 
 type Draft = {
@@ -46,14 +47,31 @@ type Recommendation = {
   is_golden?: boolean
 }
 
+type MeResponse = {
+  line_user_id: string
+  display_name: string
+  daily_calorie_target: number
+  provider: string
+  now: string
+}
+
+type ClientConfig = {
+  liff_id?: string | null
+  auth_required: boolean
+}
+
+type AuthState =
+  | { status: 'booting'; message: string; headers: Record<string, string> }
+  | { status: 'ready'; message: string; headers: Record<string, string>; me: MeResponse }
+  | { status: 'error'; message: string; headers: Record<string, string> }
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
+async function api<T>(path: string, authHeaders: Record<string, string>, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
-      'Content-Type': 'application/json',
-      'X-Line-User-Id': 'demo-user',
-      'X-Display-Name': 'Demo User',
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...authHeaders,
       ...(init?.headers ?? {}),
     },
     ...init,
@@ -68,6 +86,11 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function App() {
+  const [auth, setAuth] = useState<AuthState>({
+    status: 'booting',
+    message: 'Booting LIFF session...',
+    headers: {},
+  })
   const [activeTab, setActiveTab] = useState<'today' | 'progress' | 'eat'>('today')
   const [text, setText] = useState('')
   const [mealType, setMealType] = useState('lunch')
@@ -91,36 +114,102 @@ function App() {
     }, {})
   }, [recommendations])
 
+  useEffect(() => {
+    async function bootstrapAuth() {
+      try {
+        const config = await api<ClientConfig>('/api/client-config', {})
+        const usingLiff = Boolean(config.liff_id)
+
+        if (usingLiff && config.liff_id) {
+          await liff.init({ liffId: config.liff_id })
+
+          if (!liff.isLoggedIn()) {
+            liff.login({ redirectUri: window.location.href })
+            return
+          }
+
+          const idToken = liff.getIDToken()
+          if (!idToken) {
+            throw new Error('LIFF login succeeded but no ID token was returned.')
+          }
+
+          const me = await api<MeResponse>('/api/me', { 'X-Line-Id-Token': idToken })
+          setAuth({
+            status: 'ready',
+            message: 'LIFF session ready.',
+            headers: { 'X-Line-Id-Token': idToken },
+            me,
+          })
+          return
+        }
+
+        if (config.auth_required) {
+          throw new Error('LIFF auth is required but no LIFF ID is configured on the backend.')
+        }
+
+        const demoHeaders: Record<string, string> = import.meta.env.DEV
+          ? {
+              'X-Line-User-Id': 'demo-user',
+              'X-Display-Name': 'Demo User',
+            }
+          : {}
+        const me = await api<MeResponse>('/api/me', demoHeaders)
+        setAuth({
+          status: 'ready',
+          message: 'Using local development auth.',
+          headers: demoHeaders,
+          me,
+        })
+      } catch (error) {
+        setAuth({
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Failed to initialize LIFF auth.',
+          headers: {},
+        })
+      }
+    }
+
+    void bootstrapAuth()
+  }, [])
+
   async function refreshSummary() {
-    const data = await api<{ summary: Summary; coach_message: string }>('/api/day-summary')
+    if (auth.status !== 'ready') return
+    const data = await api<{ summary: Summary; coach_message: string }>('/api/day-summary', auth.headers)
     setSummary(data.summary)
     setMessage(data.coach_message)
   }
 
   async function refreshRecommendations() {
-    const data = await api<{ recommendations: { items: Recommendation[] }; coach_message: string }>('/api/recommendations')
+    if (auth.status !== 'ready') return
+    const data = await api<{ recommendations: { items: Recommendation[] }; coach_message: string }>('/api/recommendations', auth.headers)
     setRecommendations(data.recommendations.items)
     setMessage(data.coach_message)
   }
 
   useEffect(() => {
+    if (auth.status !== 'ready') return
     void refreshSummary()
     void refreshRecommendations()
-  }, [])
+  }, [auth.status])
 
   async function handleIntake(event: FormEvent) {
     event.preventDefault()
+    if (auth.status !== 'ready') return
     setLoading(true)
     try {
-      const data = await api<{ draft: Draft; coach_message: string }>('/api/intake', {
-        method: 'POST',
-        body: JSON.stringify({
-          text,
-          meal_type: mealType,
-          mode,
-          source_mode: 'text',
-        }),
-      })
+      const data = await api<{ draft: Draft; coach_message: string }>(
+        '/api/intake',
+        auth.headers,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            text,
+            meal_type: mealType,
+            mode,
+            source_mode: 'text',
+          }),
+        },
+      )
       setDraft(data.draft)
       setMessage(data.coach_message)
       setClarifyText('')
@@ -131,13 +220,17 @@ function App() {
 
   async function handleClarify(event: FormEvent) {
     event.preventDefault()
-    if (!draft) return
+    if (auth.status !== 'ready' || !draft) return
     setLoading(true)
     try {
-      const data = await api<{ draft: Draft; coach_message: string }>(`/api/intake/${draft.id}/clarify`, {
-        method: 'POST',
-        body: JSON.stringify({ answer: clarifyText }),
-      })
+      const data = await api<{ draft: Draft; coach_message: string }>(
+        `/api/intake/${draft.id}/clarify`,
+        auth.headers,
+        {
+          method: 'POST',
+          body: JSON.stringify({ answer: clarifyText }),
+        },
+      )
       setDraft(data.draft)
       setMessage(data.coach_message)
       setClarifyText('')
@@ -147,13 +240,17 @@ function App() {
   }
 
   async function handleConfirm(forceConfirm = false) {
-    if (!draft) return
+    if (auth.status !== 'ready' || !draft) return
     setLoading(true)
     try {
-      const data = await api<{ summary: Summary; coach_message: string }>(`/api/intake/${draft.id}/confirm`, {
-        method: 'POST',
-        body: JSON.stringify({ force_confirm: forceConfirm }),
-      })
+      const data = await api<{ summary: Summary; coach_message: string }>(
+        `/api/intake/${draft.id}/confirm`,
+        auth.headers,
+        {
+          method: 'POST',
+          body: JSON.stringify({ force_confirm: forceConfirm }),
+        },
+      )
       setSummary(data.summary)
       setDraft(null)
       setText('')
@@ -166,12 +263,17 @@ function App() {
 
   async function handleWeight(event: FormEvent) {
     event.preventDefault()
+    if (auth.status !== 'ready') return
     setLoading(true)
     try {
-      const data = await api<{ summary: Summary; coach_message: string }>('/api/weights', {
-        method: 'POST',
-        body: JSON.stringify({ weight: Number(weight) }),
-      })
+      const data = await api<{ summary: Summary; coach_message: string }>(
+        '/api/weights',
+        auth.headers,
+        {
+          method: 'POST',
+          body: JSON.stringify({ weight: Number(weight) }),
+        },
+      )
       setSummary(data.summary)
       setWeight('')
       setMessage(data.coach_message)
@@ -181,12 +283,17 @@ function App() {
   }
 
   async function handlePlan() {
+    if (auth.status !== 'ready') return
     setLoading(true)
     try {
-      const data = await api<{ plan: { allocations: Record<string, number> }; coach_message: string }>('/api/plans/day', {
-        method: 'POST',
-        body: JSON.stringify({}),
-      })
+      const data = await api<{ plan: { allocations: Record<string, number> }; coach_message: string }>(
+        '/api/plans/day',
+        auth.headers,
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+        },
+      )
       setDayPlan(data.plan.allocations)
       setMessage(data.coach_message)
     } finally {
@@ -195,12 +302,17 @@ function App() {
   }
 
   async function handleCompensation() {
+    if (auth.status !== 'ready') return
     setLoading(true)
     try {
-      const data = await api<{ compensation: { options: Array<{ label: string; daily_adjustment: number; days: number; note: string }> }; coach_message: string }>('/api/plans/compensation', {
-        method: 'POST',
-        body: JSON.stringify({ expected_extra_kcal: Number(extraKcal) }),
-      })
+      const data = await api<{ compensation: { options: Array<{ label: string; daily_adjustment: number; days: number; note: string }> }; coach_message: string }>(
+        '/api/plans/compensation',
+        auth.headers,
+        {
+          method: 'POST',
+          body: JSON.stringify({ expected_extra_kcal: Number(extraKcal) }),
+        },
+      )
       setCompensation(data.compensation.options)
       setMessage(data.coach_message)
     } finally {
@@ -208,13 +320,41 @@ function App() {
     }
   }
 
+  if (auth.status === 'booting') {
+    return (
+      <div className="app-shell">
+        <header className="hero">
+          <div>
+            <p className="eyebrow">AI Fat Loss OS</p>
+            <h1>Booting LIFF</h1>
+            <p className="subtle">{auth.message}</p>
+          </div>
+        </header>
+      </div>
+    )
+  }
+
+  if (auth.status === 'error') {
+    return (
+      <div className="app-shell">
+        <header className="hero">
+          <div>
+            <p className="eyebrow">AI Fat Loss OS</p>
+            <h1>LIFF auth failed</h1>
+            <p className="subtle">{auth.message}</p>
+          </div>
+        </header>
+      </div>
+    )
+  }
+
   return (
     <div className="app-shell">
       <header className="hero">
         <div>
-          <p className="eyebrow">AI 減脂操作系統 v1</p>
+          <p className="eyebrow">AI Fat Loss OS v1</p>
           <h1>LINE + LIFF Calorie Helper</h1>
-          <p className="subtle">先把 intake / clarify / confirm / summary / recommend 跑順，再慢慢把記憶與規劃變深。</p>
+          <p className="subtle">Signed in as {auth.me.display_name}</p>
         </div>
         <div className="status-card">
           <span>Today</span>
@@ -234,7 +374,12 @@ function App() {
           <article className="panel">
             <h2>Log a meal</h2>
             <form onSubmit={handleIntake} className="stack">
-              <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="例如：雞胸便當 半飯 無糖豆漿" rows={5} />
+              <textarea
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+                placeholder="例如：雞胸便當加半碗飯，青菜有吃完。"
+                rows={5}
+              />
               <div className="row">
                 <select value={mealType} onChange={(event) => setMealType(event.target.value)}>
                   <option value="breakfast">Breakfast</option>
@@ -263,13 +408,17 @@ function App() {
                 <p>{draft.uncertainty_note}</p>
                 <div className="chips">
                   {draft.parsed_items.map((item) => (
-                    <span key={item.name} className="chip">{item.name}{item.kcal ? ` ${item.kcal}kcal` : ''}</span>
+                    <span key={item.name} className="chip">{item.name}{item.kcal ? ` ${item.kcal} kcal` : ''}</span>
                   ))}
                 </div>
                 {draft.followup_question && (
                   <form onSubmit={handleClarify} className="stack">
                     <label>{draft.followup_question}</label>
-                    <input value={clarifyText} onChange={(event) => setClarifyText(event.target.value)} placeholder="補充：飯半碗、主菜雞腿、有滷蛋" />
+                    <input
+                      value={clarifyText}
+                      onChange={(event) => setClarifyText(event.target.value)}
+                      placeholder="補充份量、分食、沒吃完等資訊"
+                    />
                     <button disabled={loading || !clarifyText.trim()} type="submit">Submit clarification</button>
                   </form>
                 )}
@@ -279,7 +428,7 @@ function App() {
                 </div>
               </div>
             ) : (
-              <p className="subtle">目前沒有 active draft。</p>
+              <p className="subtle">No active draft yet.</p>
             )}
           </article>
 
@@ -305,7 +454,7 @@ function App() {
                 </ul>
               </>
             ) : (
-              <p className="subtle">尚未載入 summary。</p>
+              <p className="subtle">Loading summary...</p>
             )}
           </article>
         </section>
