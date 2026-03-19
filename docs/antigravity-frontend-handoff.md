@@ -4,6 +4,7 @@ Source of truth for frontend and interaction work on the LINE + LIFF calorie hel
 
 - Product baseline: [product-spec-v1.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/product-spec-v1.md)
 - Memory design: [memory-onboarding-v2.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/memory-onboarding-v2.md)
+- Memory schema: [memory-schema-spec.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/memory-schema-spec.md)
 - Execution checklist: [TODO.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/TODO.md)
 - Architecture: [architecture.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/architecture.md)
 - Current frontend shell: [App.tsx](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/frontend/src/App.tsx)

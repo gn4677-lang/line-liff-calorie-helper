@@ -225,4 +225,5 @@ Frontend should support:
 Antigravity should read this together with:
 - [antigravity-frontend-handoff.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/antigravity-frontend-handoff.md)
 - [antigravity-prompt.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/antigravity-prompt.md)
+- [memory-schema-spec.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/memory-schema-spec.md)
 - [product-spec-v1.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/product-spec-v1.md)
