@@ -38,48 +38,75 @@ def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFo
 
 def create_image(output_path: Path) -> None:
     width, height = 2500, 843
-    image = Image.new("RGB", (width, height), "#F6F1E8")
+    image = Image.new("RGB", (width, height), "#F3EFE8")
     draw = ImageDraw.Draw(image)
 
-    eyebrow_font = load_font(26, bold=True)
-    title_font = load_font(86, bold=True)
-    subtitle_font = load_font(32)
-    cta_font = load_font(28, bold=True)
-    arrow_font = load_font(34, bold=True)
+    title_font = load_font(92, bold=True)
 
     sections = [
         {
-            "eyebrow": "TODAY",
             "title": "今日日誌",
-            "subtitle": "直接看今天吃了什麼\n還差多少熱量",
-            "accent": "#10B981",
-            "fill": "#F0FDF7",
-            "outline": "#BFEBD9",
+            "accent": "#5F8F7B",
+            "fill": "#EAF2ED",
+            "outline": "#D7E4DD",
+            "icon": "journal",
         },
         {
-            "eyebrow": "EAT",
             "title": "吃什麼",
-            "subtitle": "先給你一個主推\n再留兩個備選",
-            "accent": "#F59E0B",
-            "fill": "#FFF8EB",
-            "outline": "#F6D69A",
+            "accent": "#B88746",
+            "fill": "#F6EFE3",
+            "outline": "#E7DACA",
+            "icon": "eat",
         },
         {
-            "eyebrow": "BODY",
             "title": "身體策略",
-            "subtitle": "看體重走勢\n和今天可吃多少",
-            "accent": "#2563EB",
-            "fill": "#EFF6FF",
-            "outline": "#C7D9FA",
+            "accent": "#6F85A6",
+            "fill": "#EDF2F8",
+            "outline": "#D8E0EC",
+            "icon": "body",
         },
     ]
 
-    gap = 52
-    outer_margin = 48
+    gap = 44
+    outer_margin = 42
     button_width = (width - outer_margin * 2 - gap * 2) // 3
-    button_height = 664
+    button_height = 692
     top = (height - button_height) // 2
-    radius = 62
+    radius = 68
+
+    def draw_icon(kind: str, x0: int, y0: int, x1: int, y1: int, color: str) -> None:
+        icon_w = 180
+        icon_h = 180
+        cx = (x0 + x1) // 2
+        top_y = y0 + 118
+        left = cx - icon_w // 2
+        right = cx + icon_w // 2
+        bottom = top_y + icon_h
+
+        if kind == "journal":
+            draw.rounded_rectangle((left, top_y, right, bottom), radius=34, outline=color, width=10)
+            draw.line((left + 36, top_y + 58, right - 36, top_y + 58), fill=color, width=10)
+            draw.line((left + 36, top_y + 98, right - 52, top_y + 98), fill=color, width=10)
+            draw.line((left + 36, top_y + 138, right - 72, top_y + 138), fill=color, width=10)
+        elif kind == "eat":
+            draw.arc((left + 26, top_y + 74, right - 26, bottom + 18), start=200, end=340, fill=color, width=10)
+            draw.line((left + 52, bottom - 16, right - 52, bottom - 16), fill=color, width=10)
+            draw.line((right - 76, top_y + 34, right - 26, top_y + 94), fill=color, width=8)
+            draw.line((right - 98, top_y + 40, right - 48, top_y + 100), fill=color, width=8)
+            draw.arc((left + 56, top_y + 56, left + 96, top_y + 108), start=220, end=340, fill=color, width=6)
+        else:
+            draw.rounded_rectangle((left, top_y, right, bottom), radius=34, outline=color, width=10)
+            draw.line((left + 34, bottom - 40, left + 34, top_y + 44), fill=color, width=8)
+            draw.line((left + 34, bottom - 40, right - 34, bottom - 40), fill=color, width=8)
+            points = [
+                (left + 48, bottom - 60),
+                (left + 92, top_y + 108),
+                (left + 128, top_y + 128),
+                (right - 40, top_y + 64),
+            ]
+            draw.line(points, fill=color, width=10)
+            for px, py in points:
+                draw.ellipse((px - 10, py - 10, px + 10, py + 10), fill=color)
 
     for index, section in enumerate(sections):
         x0 = outer_margin + index * (button_width + gap)
@@ -88,79 +115,30 @@ def create_image(output_path: Path) -> None:
         y1 = y0 + button_height
 
         draw.rounded_rectangle(
-            (x0 + 10, y0 + 10, x1 + 10, y1 + 10),
+            (x0 + 8, y0 + 10, x1 + 8, y1 + 10),
             radius=radius,
-            fill="#E4DDD0",
+            fill="#DDD6CA",
         )
         draw.rounded_rectangle(
             (x0, y0, x1, y1),
             radius=radius,
             fill=section["fill"],
-            outline="#E7DFD1",
-            width=4,
+            outline=section["outline"],
+            width=5,
         )
         draw.rounded_rectangle(
-            (x0 + 22, y0 + 22, x1 - 22, y1 - 22),
-            radius=48,
-            outline=section["outline"],
+            (x0 + 18, y0 + 18, x1 - 18, y1 - 18),
+            radius=54,
+            outline="#F8F6F1",
             width=3,
         )
-
-        badge_x = x0 + 48
-        badge_y = y0 + 42
-        badge_w = 164
-        badge_h = 54
-        draw.rounded_rectangle(
-            (badge_x, badge_y, badge_x + badge_w, badge_y + badge_h),
-            radius=badge_h // 2,
-            fill=section["accent"],
-        )
-        draw.text((badge_x + 28, badge_y + 10), section["eyebrow"], font=eyebrow_font, fill="#FFFFFF")
-
-        icon_size = 112
-        icon_x = x0 + (button_width - icon_size) // 2
-        icon_y = y0 + 110
-        draw.rounded_rectangle(
-            (icon_x, icon_y, icon_x + icon_size, icon_y + icon_size),
-            radius=32,
-            fill=section["accent"],
-        )
-        draw.rounded_rectangle(
-            (icon_x + 18, icon_y + 18, icon_x + icon_size - 18, icon_y + icon_size - 18),
-            radius=20,
-            outline="#FFFFFF",
-            width=4,
-        )
+        draw_icon(section["icon"], x0, y0, x1, y1, section["accent"])
 
         title_bbox = draw.textbbox((0, 0), section["title"], font=title_font)
         title_w = title_bbox[2] - title_bbox[0]
         title_x = x0 + (button_width - title_w) // 2
-        title_y = y0 + 268
+        title_y = y0 + 390
         draw.text((title_x, title_y), section["title"], font=title_font, fill="#171717")
-
-        subtitle_y = title_y + 142
-        for line in section["subtitle"].split("\n"):
-            line_bbox = draw.textbbox((0, 0), line, font=subtitle_font)
-            line_w = line_bbox[2] - line_bbox[0]
-            line_x = x0 + (button_width - line_w) // 2
-            draw.text((line_x, subtitle_y), line, font=subtitle_font, fill="#626875")
-            subtitle_y += 48
-
-        pill_w = 214
-        pill_h = 70
-        pill_x = x0 + (button_width - pill_w) // 2
-        pill_y = y1 - 122
-        draw.rounded_rectangle(
-            (pill_x, pill_y, pill_x + pill_w, pill_y + pill_h),
-            radius=pill_h // 2,
-            fill=section["accent"],
-        )
-        cta_text = "點一下"
-        cta_bbox = draw.textbbox((0, 0), cta_text, font=cta_font)
-        cta_w = cta_bbox[2] - cta_bbox[0]
-        cta_h = cta_bbox[3] - cta_bbox[1]
-        draw.text((pill_x + 34, pill_y + (pill_h - cta_h) // 2 - 2), cta_text, font=cta_font, fill="#FFFFFF")
-        draw.text((pill_x + pill_w - 56, pill_y + 16), "→", font=arrow_font, fill="#FFFFFF")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path, format="PNG")
@@ -170,7 +148,7 @@ def create_rich_menu(access_token: str, liff_id: str) -> str:
     rich_menu = {
         "size": {"width": 2500, "height": 843},
         "selected": True,
-        "name": "fat_loss_os_light_v4",
+        "name": "fat_loss_os_light_v5",
         "chatBarText": "Fat Loss OS",
         "areas": [
             {
