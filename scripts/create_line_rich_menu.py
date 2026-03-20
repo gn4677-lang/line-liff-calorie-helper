@@ -38,65 +38,129 @@ def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFo
 
 def create_image(output_path: Path) -> None:
     width, height = 2500, 843
-    bg_color = "#F5F5F0"
-    card_color = "#FFFFFF"
-    accent = "#10B981"
-    text_primary = "#1A1A1A"
-    text_muted = "#6B7280"
-    divider = "#E0E0DB"
-
-    image = Image.new("RGB", (width, height), bg_color)
+    image = Image.new("RGB", (width, height), "#F6F1E8")
     draw = ImageDraw.Draw(image)
 
-    title_font = load_font(72, bold=True)
-    subtitle_font = load_font(36)
-    label_font = load_font(28)
+    eyebrow_font = load_font(26, bold=True)
+    title_font = load_font(86, bold=True)
+    subtitle_font = load_font(32)
+    cta_font = load_font(28, bold=True)
+    arrow_font = load_font(34, bold=True)
 
     sections = [
-        ("今日日誌", "直接看今天吃了什麼、差多少、還有哪些待處理。"),
-        ("吃什麼", "先給你一個主推，再留少量備選讓你快速決定。"),
-        ("身體策略", "看體重、TDEE、活動與本週方向。"),
+        {
+            "eyebrow": "TODAY",
+            "title": "今日日誌",
+            "subtitle": "直接看今天吃了什麼\n還差多少熱量",
+            "accent": "#10B981",
+            "fill": "#F0FDF7",
+            "outline": "#BFEBD9",
+        },
+        {
+            "eyebrow": "EAT",
+            "title": "吃什麼",
+            "subtitle": "先給你一個主推\n再留兩個備選",
+            "accent": "#F59E0B",
+            "fill": "#FFF8EB",
+            "outline": "#F6D69A",
+        },
+        {
+            "eyebrow": "BODY",
+            "title": "身體策略",
+            "subtitle": "看體重走勢\n和今天可吃多少",
+            "accent": "#2563EB",
+            "fill": "#EFF6FF",
+            "outline": "#C7D9FA",
+        },
     ]
 
-    panel_width = width // 3
-    card_margin_x = 40
-    card_margin_y = 40
-    card_radius = 32
+    gap = 52
+    outer_margin = 48
+    button_width = (width - outer_margin * 2 - gap * 2) // 3
+    button_height = 664
+    top = (height - button_height) // 2
+    radius = 62
 
-    for index, (title, subtitle) in enumerate(sections):
-        x0 = index * panel_width
-        cx0 = x0 + card_margin_x
-        cy0 = card_margin_y
-        cx1 = x0 + panel_width - card_margin_x
-        cy1 = height - card_margin_y
+    for index, section in enumerate(sections):
+        x0 = outer_margin + index * (button_width + gap)
+        y0 = top
+        x1 = x0 + button_width
+        y1 = y0 + button_height
 
-        shadow_offset = 4
         draw.rounded_rectangle(
-            (cx0 + shadow_offset, cy0 + shadow_offset, cx1 + shadow_offset, cy1 + shadow_offset),
-            radius=card_radius,
-            fill="#E8E8E3",
+            (x0 + 10, y0 + 10, x1 + 10, y1 + 10),
+            radius=radius,
+            fill="#E4DDD0",
         )
-        draw.rounded_rectangle((cx0, cy0, cx1, cy1), radius=card_radius, fill=card_color)
-        draw.rectangle((cx0 + 80, cy0 + 24, cx1 - 80, cy0 + 32), fill=accent)
+        draw.rounded_rectangle(
+            (x0, y0, x1, y1),
+            radius=radius,
+            fill=section["fill"],
+            outline="#E7DFD1",
+            width=4,
+        )
+        draw.rounded_rectangle(
+            (x0 + 22, y0 + 22, x1 - 22, y1 - 22),
+            radius=48,
+            outline=section["outline"],
+            width=3,
+        )
 
-        title_y = cy0 + 100
-        draw.text((cx0 + 80, title_y), title, font=title_font, fill=text_primary)
-        subtitle_y = title_y + 110
-        draw.text((cx0 + 80, subtitle_y), subtitle, font=subtitle_font, fill=text_muted)
+        badge_x = x0 + 48
+        badge_y = y0 + 42
+        badge_w = 164
+        badge_h = 54
+        draw.rounded_rectangle(
+            (badge_x, badge_y, badge_x + badge_w, badge_y + badge_h),
+            radius=badge_h // 2,
+            fill=section["accent"],
+        )
+        draw.text((badge_x + 28, badge_y + 10), section["eyebrow"], font=eyebrow_font, fill="#FFFFFF")
 
-        btn_w = 200
-        btn_h = 64
-        btn_x = cx0 + (cx1 - cx0 - btn_w) // 2
-        btn_y = cy1 - 120
-        draw.rounded_rectangle((btn_x, btn_y, btn_x + btn_w, btn_y + btn_h), radius=btn_h // 2, fill=accent)
-        bbox = draw.textbbox((0, 0), "打開", font=label_font)
-        tw = bbox[2] - bbox[0]
-        th = bbox[3] - bbox[1]
-        draw.text((btn_x + (btn_w - tw) // 2, btn_y + (btn_h - th) // 2 - 2), "打開", font=label_font, fill="#FFFFFF")
+        icon_size = 112
+        icon_x = x0 + (button_width - icon_size) // 2
+        icon_y = y0 + 110
+        draw.rounded_rectangle(
+            (icon_x, icon_y, icon_x + icon_size, icon_y + icon_size),
+            radius=32,
+            fill=section["accent"],
+        )
+        draw.rounded_rectangle(
+            (icon_x + 18, icon_y + 18, icon_x + icon_size - 18, icon_y + icon_size - 18),
+            radius=20,
+            outline="#FFFFFF",
+            width=4,
+        )
 
-    for i in range(1, 3):
-        x = i * panel_width
-        draw.line((x, card_margin_y + 60, x, height - card_margin_y - 60), fill=divider, width=2)
+        title_bbox = draw.textbbox((0, 0), section["title"], font=title_font)
+        title_w = title_bbox[2] - title_bbox[0]
+        title_x = x0 + (button_width - title_w) // 2
+        title_y = y0 + 268
+        draw.text((title_x, title_y), section["title"], font=title_font, fill="#171717")
+
+        subtitle_y = title_y + 142
+        for line in section["subtitle"].split("\n"):
+            line_bbox = draw.textbbox((0, 0), line, font=subtitle_font)
+            line_w = line_bbox[2] - line_bbox[0]
+            line_x = x0 + (button_width - line_w) // 2
+            draw.text((line_x, subtitle_y), line, font=subtitle_font, fill="#626875")
+            subtitle_y += 48
+
+        pill_w = 214
+        pill_h = 70
+        pill_x = x0 + (button_width - pill_w) // 2
+        pill_y = y1 - 122
+        draw.rounded_rectangle(
+            (pill_x, pill_y, pill_x + pill_w, pill_y + pill_h),
+            radius=pill_h // 2,
+            fill=section["accent"],
+        )
+        cta_text = "點一下"
+        cta_bbox = draw.textbbox((0, 0), cta_text, font=cta_font)
+        cta_w = cta_bbox[2] - cta_bbox[0]
+        cta_h = cta_bbox[3] - cta_bbox[1]
+        draw.text((pill_x + 34, pill_y + (pill_h - cta_h) // 2 - 2), cta_text, font=cta_font, fill="#FFFFFF")
+        draw.text((pill_x + pill_w - 56, pill_y + 16), "→", font=arrow_font, fill="#FFFFFF")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path, format="PNG")
@@ -106,7 +170,7 @@ def create_rich_menu(access_token: str, liff_id: str) -> str:
     rich_menu = {
         "size": {"width": 2500, "height": 843},
         "selected": True,
-        "name": "fat_loss_os_light_v3",
+        "name": "fat_loss_os_light_v4",
         "chatBarText": "Fat Loss OS",
         "areas": [
             {
