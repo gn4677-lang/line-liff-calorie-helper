@@ -85,6 +85,26 @@ Examples:
 - `https://your-frontend-domain/`
 - `https://your-public-url/`
 
+## Current LIFF Endpoint (Builder Space)
+
+Current deployed LIFF web app domain:
+
+- `https://gn4677-calorie-helper.ai-builders.space/`
+
+LINE entry URLs (the LIFF launcher still points here, which then loads the web app domain above):
+
+- `https://liff.line.me/{LIFF_CHANNEL_ID}?tab=today`
+- `https://liff.line.me/{LIFF_CHANNEL_ID}?tab=eat`
+- `https://liff.line.me/{LIFF_CHANNEL_ID}?tab=progress`
+
+## Rich Menu Design
+
+Before changing the LINE rich menu artwork, read:
+
+- [line-rich-menu-design-guardrails.md](/C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/line-rich-menu-design-guardrails.md)
+
+Do not redesign the rich menu as three desktop cards with inner CTA buttons. The whole region is already the tap target.
+
 ## Current Attachment Flow
 
 - LINE image/audio content is fetched by the backend.
