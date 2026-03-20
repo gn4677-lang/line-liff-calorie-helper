@@ -148,7 +148,7 @@ export function useApp(): AppContextValue {
 export function AppProvider({ children }: { children: ReactNode }) {
   const [auth, setAuth] = useState<AuthState>({
     status: 'booting',
-    message: '正在連接 LIFF...',
+    message: 'Connecting...',
     headers: {},
   })
   const [activeTab, setActiveTab] = useState<TabKey>(() => resolveInitialTab())
@@ -171,13 +171,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [onboardingForm, setOnboardingForm] = useState<Preferences>(DEFAULT_PREFERENCES)
   const [dayPlan, setDayPlan] = useState<DayPlan | null>(null)
   const [compensation, setCompensation] = useState<Compensation | null>(null)
-  const [message, setMessage] = useState('系統已準備好。')
+  const [message, setMessage] = useState('Preparing your day...')
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     async function bootstrapAuth() {
       try {
         const config = await api<ClientConfig>('/api/client-config', {})
+        try {
+          const me = await api<MeResponse>('/api/me', {})
+          setAuth({ status: 'ready', message: 'Connected.', headers: {}, me })
+          return
+        } catch {
+          // Fall through to LIFF bootstrap when no app session cookie exists yet.
+        }
+
         if (config.liff_id) {
           await liff.init({ liffId: config.liff_id })
           if (!liff.isLoggedIn()) {
@@ -185,25 +193,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
             return
           }
           const idToken = liff.getIDToken()
-          if (!idToken) throw new Error('LIFF 登入成功，但沒有拿到可用的 ID Token。')
+          if (!idToken) throw new Error('LIFF did not return a usable ID token.')
           const me = await api<MeResponse>('/api/me', { 'X-Line-Id-Token': idToken })
-          setAuth({ status: 'ready', message: 'LIFF 已連線。', headers: { 'X-Line-Id-Token': idToken }, me })
+          setAuth({ status: 'ready', message: 'LIFF connected.', headers: { 'X-Line-Id-Token': idToken }, me })
           return
         }
 
         if (config.auth_required) {
-          throw new Error('正式環境需要 LIFF 驗證，但目前沒有設定 LIFF ID。')
+          throw new Error('LIFF auth is required, but no LIFF ID is configured.')
         }
 
         const demoHeaders: Record<string, string> = import.meta.env.DEV
           ? { 'X-Line-User-Id': 'demo-user', 'X-Display-Name': 'Demo User' }
           : {}
         const me = await api<MeResponse>('/api/me', demoHeaders)
-        setAuth({ status: 'ready', message: '目前是示範模式。', headers: demoHeaders, me })
+        setAuth({ status: 'ready', message: 'Demo mode.', headers: demoHeaders, me })
       } catch (error) {
         setAuth({
           status: 'error',
-          message: error instanceof Error ? error.message : 'LIFF 啟動失敗。',
+          message: error instanceof Error ? error.message : 'LIFF auth failed.',
           headers: {},
         })
       }

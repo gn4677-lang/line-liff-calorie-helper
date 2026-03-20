@@ -561,6 +561,9 @@ class MeResponse(BaseModel):
     daily_calorie_target: int
     provider: str
     now: datetime
+    app_session_token: Optional[str] = None
+    app_session_expires_at: Optional[datetime] = None
+    auth_mode: str = "unknown"
 
 
 class ClientConfigResponse(BaseModel):

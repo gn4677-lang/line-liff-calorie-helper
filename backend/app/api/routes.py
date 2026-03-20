@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 import json
 import re
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, Response, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -43,6 +43,7 @@ from ..schemas import (
     WeightLogRequest,
 )
 from ..services.auth import get_or_create_user, verify_liff_id_token
+from ..services.liff_session import create_liff_session, verify_liff_session
 from ..services.body_metrics import (
     activity_to_response,
     body_goal_to_response,
@@ -528,21 +529,47 @@ def _record_draft_uncertainty(db: Session, *, trace_id: str, task_run_id: str, u
 
 
 async def current_user(
+    request: Request,
     db: Session = Depends(get_db),
     x_line_user_id: str | None = Header(default=None),
     x_display_name: str | None = Header(default=None),
     x_line_id_token: str | None = Header(default=None),
+    x_app_session: str | None = Header(default=None),
 ):
-    if x_line_id_token:
+    cookie_session = request.cookies.get("app_session")
+    identity = None
+
+    if cookie_session:
+        try:
+            identity = verify_liff_session(cookie_session)
+            request.state.auth_mode = "app_session"
+            request.state.verified_identity = identity
+        except HTTPException:
+            identity = None
+
+    if identity is not None:
+        line_user_id = identity.line_user_id
+        display_name = identity.display_name
+    elif x_app_session:
+        identity = verify_liff_session(x_app_session)
+        line_user_id = identity.line_user_id
+        display_name = identity.display_name
+        request.state.auth_mode = "app_session"
+        request.state.verified_identity = identity
+    elif x_line_id_token:
         identity = await verify_liff_id_token(x_line_id_token)
         line_user_id = identity.line_user_id
         display_name = identity.display_name
+        request.state.auth_mode = "liff_id_token"
+        request.state.verified_identity = identity
     elif x_line_user_id:
         line_user_id = x_line_user_id
         display_name = x_display_name or "Demo User"
+        request.state.auth_mode = "header_demo"
     elif settings.environment != "production":
         line_user_id = settings.default_user_id
         display_name = x_display_name or "Demo User"
+        request.state.auth_mode = "dev_default"
     else:
         raise HTTPException(status_code=401, detail="LINE authentication is required")
 
@@ -566,13 +593,32 @@ def client_config() -> ClientConfigResponse:
 
 
 @router.get(f"{settings.api_prefix}/me", response_model=MeResponse)
-def me(user=Depends(current_user)) -> MeResponse:
+def me(request: Request, response: Response, user=Depends(current_user)) -> MeResponse:
+    auth_mode = getattr(request.state, "auth_mode", "unknown")
+    app_session_token = None
+    app_session_expires_at = None
+    if auth_mode == "liff_id_token":
+        identity = getattr(request.state, "verified_identity", None)
+        if identity is not None:
+            app_session_token, app_session_expires_at = create_liff_session(identity)
+            response.set_cookie(
+                key="app_session",
+                value=app_session_token,
+                max_age=max(settings.liff_session_ttl_hours, 1) * 3600,
+                httponly=True,
+                samesite="lax",
+                secure=settings.environment == "production",
+                path="/",
+            )
     return MeResponse(
         line_user_id=user.line_user_id,
         display_name=user.display_name,
         daily_calorie_target=user.daily_calorie_target,
         provider=settings.ai_provider,
         now=datetime.now(timezone.utc),
+        app_session_token=app_session_token,
+        app_session_expires_at=app_session_expires_at,
+        auth_mode=auth_mode,
     )
 
 

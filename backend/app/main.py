@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 import logging
 import sys
+import threading
 import uuid
 
 from fastapi import FastAPI, Request
@@ -23,6 +24,13 @@ from .services.knowledge import prewarm_knowledge_layer
 logger = logging.getLogger(__name__)
 
 
+def _prewarm_knowledge_background() -> None:
+    try:
+        prewarm_knowledge_layer()
+    except Exception:
+        logger.exception("Failed to prewarm knowledge layer during startup.")
+
+
 def _startup_engine(app: FastAPI):
     testing_factory = getattr(app.state, "_testing_session_factory", None)
     if testing_factory is not None:
@@ -39,10 +47,7 @@ async def lifespan(app: FastAPI):
     startup_engine = _startup_engine(app)
     Base.metadata.create_all(bind=startup_engine)
     ensure_runtime_schema(startup_engine)
-    try:
-        prewarm_knowledge_layer()
-    except Exception:
-        logger.exception("Failed to prewarm knowledge layer during startup.")
+    threading.Thread(target=_prewarm_knowledge_background, daemon=True).start()
 
     should_run_background_worker = "pytest" not in sys.modules
     if should_run_background_worker:

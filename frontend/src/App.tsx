@@ -170,7 +170,7 @@ function AppShell() {
   if (auth.status === 'booting') {
     return (
       <div className="full-screen-state">
-        <h1 className="text-title font-bold">AI Fat Loss OS</h1>
+        <h1 className="text-title font-bold">LIFF Auth Failed</h1>
         <p className="text-caption text-muted state-copy">{auth.message}</p>
       </div>
     )
@@ -182,7 +182,7 @@ function AppShell() {
         <h1 className="text-title font-bold">LIFF 無法啟動</h1>
         <p className="text-body text-secondary state-copy">{auth.message}</p>
         <button className="btn btn-primary" type="button" onClick={() => window.location.reload()}>
-          重新整理
+          Reload
         </button>
       </div>
     )

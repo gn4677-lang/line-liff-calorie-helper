@@ -241,6 +241,9 @@ export type MeResponse = {
   daily_calorie_target: number
   provider: string
   now: string
+  app_session_token?: string | null
+  app_session_expires_at?: string | null
+  auth_mode?: string
 }
 
 export type ClientConfig = {

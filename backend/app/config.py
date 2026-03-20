@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     line_channel_secret: Optional[str] = None
     line_channel_access_token: Optional[str] = None
     liff_channel_id: Optional[str] = None
+    liff_session_secret: Optional[str] = None
+    liff_session_ttl_hours: int = 168
     frontend_dist_dir: str = str(BASE_DIR / "frontend" / "dist")
 
 
