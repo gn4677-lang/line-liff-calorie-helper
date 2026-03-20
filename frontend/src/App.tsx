@@ -70,7 +70,7 @@ function OnboardingModal() {
 
         <div className="stack onboarding-stack">
           <div>
-            <label className="text-micro font-bold text-muted form-label">早餐習慣</label>
+            <label className="text-caption font-bold text-muted form-label">早餐習慣</label>
             <select
               className="input-field"
               value={onboardingForm.breakfast_habit}
@@ -89,7 +89,7 @@ function OnboardingModal() {
           </div>
 
           <div>
-            <label className="text-micro font-bold text-muted form-label">碳水需求</label>
+            <label className="text-caption font-bold text-muted form-label">碳水需求</label>
             <select
               className="input-field"
               value={onboardingForm.carb_need}
@@ -107,7 +107,7 @@ function OnboardingModal() {
           </div>
 
           <div>
-            <label className="text-micro font-bold text-muted form-label">明確不想看到</label>
+            <label className="text-caption font-bold text-muted form-label">明確不想看到</label>
             <div className="chip-row onboarding-chip-row">
               {HARD_DISLIKE_OPTIONS.map((item) => {
                 const disabled = onboardingForm.hard_dislikes.length >= 3 && !onboardingForm.hard_dislikes.includes(item) && item !== 'none'
@@ -170,8 +170,8 @@ function AppShell() {
   if (auth.status === 'booting') {
     return (
       <div className="full-screen-state">
-        <h1 className="text-title font-bold">LIFF Auth Failed</h1>
-        <p className="text-caption text-muted state-copy">{auth.message}</p>
+        <h1 className="text-title font-bold">正在連線</h1>
+        <p className="text-body text-muted state-copy">{auth.message}</p>
       </div>
     )
   }
@@ -182,7 +182,7 @@ function AppShell() {
         <h1 className="text-title font-bold">LIFF 無法啟動</h1>
         <p className="text-body text-secondary state-copy">{auth.message}</p>
         <button className="btn btn-primary" type="button" onClick={() => window.location.reload()}>
-          Reload
+          重新整理
         </button>
       </div>
     )

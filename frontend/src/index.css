@@ -14,8 +14,8 @@
   --accent-dark: #248A3D;
   
   --text-primary: #000000;   /* Label */
-  --text-secondary: #3C3C4399; /* Secondary Label */
-  --text-muted: #3C3C434D;     /* Tertiary Label */
+  --text-secondary: #3C3C43CC; /* Secondary Label */
+  --text-muted: #8A90A6;       /* Tertiary Label */
   
   --success: #34C759;
   --success-soft: #E5F9EA;
@@ -30,15 +30,15 @@
   --border-focus: #34C759;
 
   /* ── Typography ── */
-  --font-main: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --font-main: "Noto Sans TC", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 
   --text-hero: 2.5rem;
   --text-title: 1.5rem;
   --text-heading: 1.125rem;
   --text-body: 1rem;
-  --text-caption: 0.875rem;
-  --text-micro: 0.75rem;
+  --text-caption: 0.95rem;
+  --text-micro: 0.85rem;
 
   /* ── Spacing (Touch-friendly) ── */
   --sp-xs: 4px;
@@ -93,6 +93,7 @@ body {
   background-image: none;
   color: var(--text-primary);
   line-height: 1.5;
+  font-weight: 500;
   min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

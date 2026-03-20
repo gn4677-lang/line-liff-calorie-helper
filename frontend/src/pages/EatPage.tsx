@@ -45,16 +45,16 @@ function inferMealTypeFromClock(): string {
   return 'dinner'
 }
 
-function CandidateInlineCard({
+function CandidateCard({
   candidate,
   emphasis,
-  heroReason,
+  reason,
   expanded,
   onToggle,
 }: {
   candidate: EatFeedCandidate
-  emphasis?: 'hero' | 'backup'
-  heroReason?: string
+  emphasis: 'hero' | 'backup'
+  reason: string
   expanded: boolean
   onToggle: () => void
 }) {
@@ -66,15 +66,19 @@ function CandidateInlineCard({
           <span className="candidate-kcal">{candidate.kcal_low}-{candidate.kcal_high} kcal</span>
         </div>
         <strong className="candidate-title">{candidate.title}</strong>
-        {candidate.store_name && candidate.store_name !== candidate.title ? <span className="candidate-subtitle">{candidate.store_name}</span> : null}
-        <p className="candidate-reason">{heroReason || candidate.reason_factors[0] || '系統先挑了一個最穩的選項。'}</p>
+        {candidate.store_name && candidate.store_name !== candidate.title ? (
+          <span className="candidate-subtitle">{candidate.store_name}</span>
+        ) : null}
+        <p className="candidate-reason">{reason}</p>
       </button>
       {expanded ? (
         <div className="candidate-inline-detail">
-          {candidate.reason_factors.slice(0, 3).map((reason) => (
-            <div key={reason} className="detail-line">{reason}</div>
+          {candidate.reason_factors.slice(0, 3).map((item) => (
+            <div key={item} className="detail-line">{item}</div>
           ))}
-          {formatTravel(candidate) ? <div className="detail-line detail-line--muted">{formatTravel(candidate)}</div> : null}
+          {formatTravel(candidate) ? (
+            <div className="detail-line detail-line--muted">{formatTravel(candidate)}</div>
+          ) : null}
           {candidate.external_link ? (
             <a className="detail-link" href={candidate.external_link} target="_blank" rel="noreferrer">打開外部連結</a>
           ) : null}
@@ -218,7 +222,7 @@ function ExploreSheet({
         <section className="sheet-card">
           <div className="sheet-card__header">
             <h4>儲存常用地點</h4>
-            <span>讓 Eat 更像你的日常路線</span>
+            <span>讓推薦更像你的日常路線</span>
           </div>
           <div className="inline-grid">
             <input
@@ -337,47 +341,74 @@ function ExploreSheet({
 }
 
 export default function EatPage() {
-  const { auth, eatFeed, favoriteStores, goldenOrders, refreshEatFeed, savedPlaces, setMessage, summary } = useApp()
+  const {
+    auth,
+    eatFeed,
+    favoriteStores,
+    goldenOrders,
+    refreshEatFeed,
+    savedPlaces,
+    setMessage,
+    summary,
+  } = useApp()
   const [selectedChipId, setSelectedChipId] = useState<string | null>(null)
   const [expandedCandidateId, setExpandedCandidateId] = useState<string | null>(null)
   const [exploreOpen, setExploreOpen] = useState(false)
-  const [locationState, setLocationState] = useState<LocationState>({ mode: 'none' })
-  const [locationInitialized, setLocationInitialized] = useState(false)
+  const [locationState, setLocationState] = useState<LocationState | null>(null)
   const [locating, setLocating] = useState(false)
 
-  useEffect(() => {
-    if (locationInitialized) return
-    if (!savedPlaces.length) {
-      setLocationInitialized(true)
-      return
-    }
-    const defaultPlace = savedPlaces.find((place) => place.is_default) ?? (savedPlaces.length === 1 ? savedPlaces[0] : null)
-    if (defaultPlace) {
-      setLocationState({
+  const defaultSavedPlace = useMemo(
+    () => savedPlaces.find((place) => place.is_default) ?? (savedPlaces.length === 1 ? savedPlaces[0] : null),
+    [savedPlaces],
+  )
+
+  const activeLocationState = useMemo<LocationState>(() => {
+    if (locationState) return locationState
+    if (defaultSavedPlace) {
+      return {
         mode: 'saved_place',
-        saved_place_id: defaultPlace.id,
-        label: defaultPlace.label,
-      })
+        saved_place_id: defaultSavedPlace.id,
+        label: defaultSavedPlace.label,
+      }
     }
-    setLocationInitialized(true)
-  }, [locationInitialized, savedPlaces])
+    return { mode: 'none' }
+  }, [defaultSavedPlace, locationState])
+
+  const locationPayload = useMemo(
+    () => ({
+      location_mode: activeLocationState.mode,
+      saved_place_id: activeLocationState.saved_place_id,
+      lat: activeLocationState.lat,
+      lng: activeLocationState.lng,
+      query: activeLocationState.query,
+      label: activeLocationState.label,
+    }),
+    [
+      activeLocationState.label,
+      activeLocationState.lat,
+      activeLocationState.lng,
+      activeLocationState.mode,
+      activeLocationState.query,
+      activeLocationState.saved_place_id,
+    ],
+  )
 
   useEffect(() => {
     if (auth.status !== 'ready') return
     void refreshEatFeed({
       meal_type: inferMealTypeFromClock(),
-      location_mode: locationState.mode,
-      saved_place_id: locationState.saved_place_id,
-      lat: locationState.lat,
-      lng: locationState.lng,
-      query: locationState.query,
+      location_mode: locationPayload.location_mode,
+      saved_place_id: locationPayload.saved_place_id,
+      lat: locationPayload.lat,
+      lng: locationPayload.lng,
+      query: locationPayload.query,
       selected_chip_id: selectedChipId,
       explore_mode: exploreOpen,
     })
-  }, [auth.status, exploreOpen, locationState, refreshEatFeed, selectedChipId])
+  }, [auth.status, exploreOpen, locationPayload, refreshEatFeed, selectedChipId])
 
   const backupCandidates = useMemo(() => eatFeed?.backup_picks ?? [], [eatFeed])
-  const locationLabel = locationState.label || eatFeed?.location_context_used || '不限地點'
+  const locationLabel = locationPayload.label || eatFeed?.location_context_used || '不限地點'
 
   if (auth.status !== 'ready' || !summary) {
     return <div className="page-container"><div className="page-skeleton" /></div>
@@ -436,21 +467,21 @@ export default function EatPage() {
         <div>
           <span>今天還剩</span>
           <strong>{summary.remaining_kcal} kcal</strong>
+          <span className="hero-summary-row__meta">{locationLabel}</span>
         </div>
-        <button className="text-link-button" type="button" onClick={() => setExploreOpen(true)}>更多選項</button>
       </section>
 
       {eatFeed?.top_pick ? (
-        <CandidateInlineCard
+        <CandidateCard
           candidate={eatFeed.top_pick}
           emphasis="hero"
-          heroReason={eatFeed.hero_reason}
+          reason={eatFeed.hero_reason || eatFeed.top_pick.reason_factors[0] || '系統先替你挑了一個最穩的選項。'}
           expanded={expandedCandidateId === eatFeed.top_pick.candidate_id}
-          onToggle={() => setExpandedCandidateId((current) => current === eatFeed.top_pick?.candidate_id ? null : eatFeed.top_pick?.candidate_id ?? null)}
+          onToggle={() => setExpandedCandidateId((current) => (current === eatFeed.top_pick!.candidate_id ? null : eatFeed.top_pick!.candidate_id))}
         />
       ) : (
         <section className="candidate-card-mobile candidate-card-mobile--hero">
-          <p className="candidate-reason">這個情境下還沒有夠好的主推，先打開更多選項補一下上下文。</p>
+          <p className="candidate-reason">這個情境下還沒有夠好的主推，先補一下位置或需求。</p>
         </section>
       )}
 
@@ -461,7 +492,7 @@ export default function EatPage() {
               key={chip.id}
               type="button"
               className={`smart-chip ${selectedChipId === chip.id ? 'smart-chip--active' : ''}`}
-              onClick={() => setSelectedChipId((current) => current === chip.id ? null : chip.id)}
+              onClick={() => setSelectedChipId((current) => (current === chip.id ? null : chip.id))}
             >
               {chip.label}
             </button>
@@ -472,12 +503,13 @@ export default function EatPage() {
       {backupCandidates.length ? (
         <section className="backup-stack">
           {backupCandidates.map((candidate) => (
-            <CandidateInlineCard
+            <CandidateCard
               key={candidate.candidate_id}
               candidate={candidate}
               emphasis="backup"
+              reason={candidate.reason_factors[0] || '備選'}
               expanded={expandedCandidateId === candidate.candidate_id}
-              onToggle={() => setExpandedCandidateId((current) => current === candidate.candidate_id ? null : candidate.candidate_id)}
+              onToggle={() => setExpandedCandidateId((current) => (current === candidate.candidate_id ? null : candidate.candidate_id))}
             />
           ))}
         </section>
@@ -494,7 +526,7 @@ export default function EatPage() {
       <ExploreSheet
         isOpen={exploreOpen}
         onClose={() => setExploreOpen(false)}
-        locationState={locationState}
+        locationState={activeLocationState}
         locating={locating}
         onClearLocation={clearLocation}
         onUseCurrentLocation={() => void handleUseCurrentLocation()}

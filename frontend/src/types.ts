@@ -1,35 +1,35 @@
 export type Draft = {
   id: string
-  meal_session_id?: string | null
+  meal_session_id: string | null
   date: string
-  event_at?: string | null
+  event_at: string | null
   meal_type: string
   status: string
   source_mode: string
   mode: string
-  parsed_items: Array<{ name: string; kcal?: number }>
+  parsed_items: Array<{ name: string; kcal: number }>
   missing_slots: string[]
-  followup_question?: string | null
+  followup_question: string | null
   estimate_kcal: number
   kcal_low: number
   kcal_high: number
   confidence: number
   uncertainty_note: string
-  metadata?: Record<string, unknown>
-  confirmation_mode?: string
-  estimation_confidence?: number
-  confirmation_calibration?: number
-  primary_uncertainties?: string[]
-  clarification_kind?: string | null
-  answer_mode?: string | null
-  answer_options?: string[]
+  metadata: Record<string, unknown>
+  confirmation_mode: string
+  estimation_confidence: number
+  confirmation_calibration: number
+  primary_uncertainties: string[]
+  clarification_kind: string | null
+  answer_mode: string | null
+  answer_options: string[]
 }
 
 export type MealLogEntry = {
   id: number
-  meal_session_id?: string | null
+  meal_session_id: string | null
   date: string
-  event_at?: string | null
+  event_at: string | null
   meal_type: string
   description_raw: string
   kcal_estimate: number
@@ -37,21 +37,21 @@ export type MealLogEntry = {
   kcal_high: number
   confidence: number
   source_mode: string
-  parsed_items: Array<{ name: string; kcal?: number }>
+  parsed_items: Array<{ name: string; kcal: number }>
   uncertainty_note: string
-  metadata?: Record<string, unknown>
+  metadata: Record<string, unknown>
 }
 
 export type RecoveryOverlay = {
-  active?: boolean
-  adjusted_target_kcal?: number
-  active_until?: string
-  reason?: string
-  overlay_allocations?: {
-    today_target?: number
-    by_date?: Record<string, number>
+  active: boolean
+  adjusted_target_kcal: number
+  active_until: string
+  reason: string
+  overlay_allocations: {
+    today_target: number
+    by_date: Record<string, number>
   }
-  overlay_reason?: string
+  overlay_reason: string
 }
 
 export type Summary = {
@@ -65,11 +65,11 @@ export type Summary = {
   meal_subtotals: Record<string, number>
   meal_counts: Record<string, number>
   logs: MealLogEntry[]
-  latest_weight?: number | null
+  latest_weight: number | null
   has_today_weight: boolean
-  target_weight_kg?: number | null
-  delta_to_goal_kg?: number | null
-  seven_day_average_weight?: number | null
+  target_weight_kg: number | null
+  delta_to_goal_kg: number | null
+  seven_day_average_weight: number | null
   fourteen_day_direction: string
   target_adjustment_hint: string
   weekly_target_kcal: number
@@ -78,7 +78,7 @@ export type Summary = {
   weekly_drift_kcal: number
   weekly_drift_status: string
   should_offer_weekly_recovery: boolean
-  recovery_overlay?: RecoveryOverlay | null
+  recovery_overlay: RecoveryOverlay | null
   pending_async_updates_count: number
 }
 
@@ -90,14 +90,14 @@ export type LogbookRangeDay = {
 }
 
 export type BodyGoal = {
-  target_weight_kg?: number | null
+  target_weight_kg: number | null
   estimated_tdee_kcal: number
   default_daily_deficit_kcal: number
   base_target_kcal: number
   calibration_confidence: number
-  latest_weight?: number | null
-  delta_to_goal_kg?: number | null
-  last_calibrated_at?: string | null
+  latest_weight: number | null
+  delta_to_goal_kg: number | null
+  last_calibrated_at: string | null
 }
 
 export type ActivityAdjustment = {
@@ -105,7 +105,7 @@ export type ActivityAdjustment = {
   date: string
   label: string
   estimated_burn_kcal: number
-  duration_minutes?: number | null
+  duration_minutes: number | null
   source: string
   raw_input_text: string
   notes: string
@@ -114,7 +114,7 @@ export type ActivityAdjustment = {
 export type ProgressSeriesPoint = {
   date: string
   value: number
-  target?: number | null
+  target: number | null
 }
 
 export type ProgressSeries = {
@@ -128,18 +128,18 @@ export type FavoriteStore = {
   id: number
   name: string
   label: string
-  place_id?: string | null
+  place_id: string | null
   address: string
   external_link: string
   usage_count: number
-  golden_order_id?: number | null
+  golden_order_id: number | null
 }
 
 export type GoldenOrder = {
   id: number
   title: string
   store_name: string
-  place_id?: string | null
+  place_id: string | null
   kcal_low: number
   kcal_high: number
   meal_types: string[]
@@ -149,9 +149,9 @@ export type SavedPlace = {
   id: number
   label: string
   provider: string
-  place_id?: string | null
-  lat?: number | null
-  lng?: number | null
+  place_id: string | null
+  lat: number | null
+  lng: number | null
   address: string
   is_default: boolean
 }
@@ -163,9 +163,9 @@ export type EatFeedCandidate = {
   meal_types: string[]
   kcal_low: number
   kcal_high: number
-  distance_meters?: number | null
-  travel_minutes?: number | null
-  open_now?: boolean | null
+  distance_meters: number | null
+  travel_minutes: number | null
+  open_now: boolean | null
   source_type: string
   reason_factors: string[]
   external_link: string
@@ -187,10 +187,10 @@ export type SmartChip = {
 export type EatFeed = {
   session_id: string
   remaining_kcal: number
-  top_pick?: EatFeedCandidate | null
+  top_pick: EatFeedCandidate | null
   backup_picks: EatFeedCandidate[]
   exploration_sections: EatFeedSection[]
-  location_context_used?: string | null
+  location_context_used: string | null
   smart_chips: SmartChip[]
   hero_reason: string
   more_results_available: boolean
@@ -208,7 +208,7 @@ export type PlanEvent = {
 
 export type MealEvent = {
   id: number
-  plan_event_id?: number | null
+  plan_event_id: number | null
   event_date: string
   meal_type: 'breakfast' | 'lunch' | 'dinner' | 'snack'
   title: string
@@ -241,13 +241,13 @@ export type MeResponse = {
   daily_calorie_target: number
   provider: string
   now: string
-  app_session_token?: string | null
-  app_session_expires_at?: string | null
-  auth_mode?: string
+  app_session_token: string | null
+  app_session_expires_at: string | null
+  auth_mode: string
 }
 
 export type ClientConfig = {
-  liff_id?: string | null
+  liff_id: string | null
   auth_required: boolean
 }
 
@@ -293,9 +293,9 @@ export type TabKey = 'today' | 'eat' | 'progress'
 export const TAB_KEYS: TabKey[] = ['today', 'eat', 'progress']
 
 export const TAB_LABELS: Record<TabKey, string> = {
-  today: '日誌',
-  eat: '吃什麼',
-  progress: '身體與策略',
+  today: '熱量日誌',
+  eat: '食物推薦',
+  progress: '身體策略',
 }
 
 export const TAB_ICONS: Record<TabKey, string> = {

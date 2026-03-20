@@ -3,28 +3,38 @@ import { useApp } from '../AppContext'
 import { api } from '../api'
 import { FullScreenSheet } from '../components/Sheets'
 import { MEAL_TYPE_LABELS } from '../types'
-import type { Draft, JournalAddSuggestion, LogbookRangeDay, MealLogEntry, Notification, Summary } from '../types'
+import type { Draft, JournalAddSuggestion, LogbookRangeDay, MealLogEntry, Notification, ProgressSeries, Summary } from '../types'
+
+const MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'] as const
+type MealType = typeof MEAL_TYPES[number]
 
 type JournalFormState = {
   description_raw: string
   kcal_estimate: string
   event_time: string
+  meal_type: MealType
+}
+
+type TrendPoint = {
+  date: string
+  value: number
+  target?: number | null
 }
 
 function formatDateLabel(value: string): string {
   return new Date(`${value}T00:00:00`).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', weekday: 'short' })
 }
 
-function formatNotificationTime(value: string): string {
-  return new Date(value).toLocaleString('zh-TW', {
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+function formatShortDate(value: string): string {
+  return new Date(`${value}T00:00:00`).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' })
 }
 
-function toTimeValue(value?: string | null): string {
+function formatTimeLabel(value: string | null): string {
+  if (!value) return ''
+  return new Date(value).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })
+}
+
+function toTimeValue(value: string | null): string {
   if (!value) return ''
   const date = new Date(value)
   const hours = String(date.getHours()).padStart(2, '0')
@@ -37,7 +47,13 @@ function toIsoDateTime(date: string, time: string): string | undefined {
   return new Date(`${date}T${time}:00`).toISOString()
 }
 
-function inferMealTypeFromClock(): string {
+function addDays(dateString: string, diff: number): string {
+  const next = new Date(`${dateString}T00:00:00`)
+  next.setDate(next.getDate() + diff)
+  return next.toISOString().slice(0, 10)
+}
+
+function inferMealTypeFromClock(): MealType {
   const hour = new Date().getHours()
   if (hour >= 5 && hour < 10) return 'breakfast'
   if (hour >= 10 && hour < 15) return 'lunch'
@@ -73,7 +89,7 @@ function DailyHeader({
       <div className="thin-header__main">
         <button className="icon-button" type="button" onClick={() => onMoveDate(-1)} aria-label="前一天">‹</button>
         <div className="thin-header__title">
-          <span className="thin-header__eyebrow">今天還有</span>
+          <span className="thin-header__eyebrow">今天還剩</span>
           <strong>{remainingKcal} kcal</strong>
         </div>
         <button className="icon-button" type="button" onClick={() => onMoveDate(1)} aria-label="後一天">›</button>
@@ -81,57 +97,31 @@ function DailyHeader({
       <div className="thin-header__meta">
         <span>{formatDateLabel(date)}</span>
         <div className="thin-header__actions">
-          {pendingCount > 0 ? <span className="pill-indicator">{pendingCount} 個待處理</span> : null}
-          <button className="text-link-button" type="button" onClick={onOpenInsights}>趨勢</button>
+          {pendingCount > 0 ? <span className="pill-indicator">{pendingCount} 待處理</span> : null}
+          <button className="text-link-button" type="button" onClick={onOpenInsights}>回顧</button>
         </div>
       </div>
     </header>
   )
 }
 
-function DraftInbox() {
-  const {
-    auth,
-    draft,
-    selectedDate,
-    setDraft,
-    setMessage,
-    setSummary,
-    refreshActivities,
-    refreshBodyGoal,
-    refreshEatFeed,
-    refreshLogbookRange,
-    refreshProgressSeries,
-  } = useApp()
+function DraftInbox({ draft, onSynced }: { draft: Draft; onSynced: (summary: Summary) => Promise<void> }) {
+  const { auth, setDraft, setMessage } = useApp()
   const [loading, setLoading] = useState(false)
 
-  if (auth.status !== 'ready' || !draft) return null
-
-  async function syncAfterDraft(summary: Summary) {
-    setSummary(summary)
-    await Promise.all([
-      refreshLogbookRange(selectedDate),
-      refreshActivities(selectedDate),
-      refreshProgressSeries(),
-      refreshBodyGoal(),
-      refreshEatFeed({ meal_type: inferMealTypeFromClock() }),
-    ])
-  }
-
   async function handleClarify(answer: string) {
-    const currentDraft = draft
-    if (!currentDraft) return
+    if (auth.status !== 'ready') return
     setLoading(true)
     try {
-      const data = await api<{ coach_message: string; draft: Draft; summary?: Summary }>(
-        `/api/intake/${currentDraft.id}/clarify`,
+      const data = await api<{ coach_message: string; draft: Draft; summary: Summary }>(
+        `/api/intake/${draft.id}/clarify`,
         auth.headers,
         { method: 'POST', body: JSON.stringify({ answer }) },
       )
       setDraft(data.draft)
       setMessage(data.coach_message)
       if (data.summary) {
-        await syncAfterDraft(data.summary)
+        await onSynced(data.summary)
       }
     } finally {
       setLoading(false)
@@ -139,33 +129,36 @@ function DraftInbox() {
   }
 
   async function handleConfirm() {
-    const currentDraft = draft
-    if (!currentDraft) return
+    if (auth.status !== 'ready') return
     setLoading(true)
     try {
       const data = await api<{ coach_message: string; summary: Summary }>(
-        `/api/intake/${currentDraft.id}/confirm`,
+        `/api/intake/${draft.id}/confirm`,
         auth.headers,
         { method: 'POST', body: JSON.stringify({ force_confirm: true }) },
       )
       setDraft(null)
       setMessage(data.coach_message)
-      await syncAfterDraft(data.summary)
+      await onSynced(data.summary)
     } finally {
       setLoading(false)
     }
   }
 
+  const supportText = draft.followup_question
+    || draft.parsed_items.map((item) => item.name).join(' / ')
+    || draft.uncertainty_note
+
   return (
     <section className="inbox-banner">
       <div className="inbox-banner__header">
         <div>
-          <strong>還有一筆待確認</strong>
+          <strong>待確認的一餐</strong>
           <span>{draft.estimate_kcal} kcal</span>
         </div>
         <span className="pill-indicator">草稿</span>
       </div>
-      <p className="support-copy">{draft.followup_question || draft.parsed_items.map((item) => item.name).join(' / ') || draft.uncertainty_note}</p>
+      <p className="support-copy">{supportText}</p>
       {draft.followup_question ? (
         <div className="chip-row">
           {(draft.answer_options ?? []).map((option) => (
@@ -176,20 +169,19 @@ function DraftInbox() {
         </div>
       ) : (
         <button className="btn btn-primary journal-inline-action" type="button" disabled={loading} onClick={() => void handleConfirm()}>
-          直接記錄
+          確認記錄
         </button>
       )}
     </section>
   )
 }
 
-function AsyncInbox() {
+function AsyncInbox({ onRefresh }: { onRefresh: (date: string) => Promise<void> }) {
   const {
     auth,
     notifications,
     refreshEatFeed,
     refreshNotifications,
-    refreshSummary,
     selectedDate,
     setActiveTab,
   } = useApp()
@@ -203,7 +195,7 @@ function AsyncInbox() {
     try {
       await api(`/api/notifications/${notificationId}/read`, auth.headers, { method: 'POST' })
       await refreshNotifications()
-      await refreshSummary(selectedDate)
+      await onRefresh(selectedDate)
     } finally {
       setPendingId(null)
     }
@@ -218,7 +210,7 @@ function AsyncInbox() {
       await api(`/api/notifications/${notification.id}/read`, auth.headers, { method: 'POST' })
       await Promise.all([
         refreshNotifications(),
-        refreshSummary(selectedDate),
+        onRefresh(selectedDate),
         refreshEatFeed({ meal_type: inferMealTypeFromClock() }),
       ])
     } finally {
@@ -235,7 +227,7 @@ function AsyncInbox() {
       await api(`/api/notifications/${notification.id}/read`, auth.headers, { method: 'POST' })
       await Promise.all([
         refreshNotifications(),
-        refreshSummary(selectedDate),
+        onRefresh(selectedDate),
       ])
     } finally {
       setPendingId(null)
@@ -247,7 +239,7 @@ function AsyncInbox() {
       <div className="summary-card__header summary-card__header--static">
         <div>
           <strong>背景更新</strong>
-          <span>{unread.length} 個可以立即處理</span>
+          <span>{unread.length} 筆可以處理</span>
         </div>
       </div>
       <div className="sheet-list">
@@ -258,7 +250,7 @@ function AsyncInbox() {
               <div className="notification-row__content">
                 <div className="notification-row__meta">
                   <strong>{notification.title}</strong>
-                  <span>{formatNotificationTime(notification.created_at)}</span>
+                  <span>{new Date(notification.created_at).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                 </div>
                 <p>{notification.body}</p>
               </div>
@@ -273,7 +265,7 @@ function AsyncInbox() {
                       void markRead(notification.id)
                     }}
                   >
-                    去看推薦
+                    看推薦
                   </button>
                 ) : null}
                 {actionable ? (
@@ -323,7 +315,7 @@ function QuickPickList({
   date,
   onSelect,
 }: {
-  mealType: string
+  mealType: MealType
   date: string
   onSelect: (description: string, kcal: number) => Promise<void>
 }) {
@@ -365,23 +357,73 @@ function QuickPickList({
   )
 }
 
-function InlineComposer({ mealType, date, onDone }: { mealType: string; date: string; onDone: () => void }) {
-  const { auth, setSummary, refreshActivities, refreshBodyGoal, refreshEatFeed, refreshLogbookRange, refreshProgressSeries } = useApp()
-  const [form, setForm] = useState<JournalFormState>({ description_raw: '', kcal_estimate: '', event_time: '' })
+function InlineEditor({
+  mealType,
+  date,
+  initialLog,
+  onDone,
+  onSynced,
+}: {
+  mealType: MealType
+  date: string
+  initialLog?: MealLogEntry
+  onDone: () => void
+  onSynced: (summary: Summary) => Promise<void>
+}) {
+  const { auth } = useApp()
+  const isEdit = Boolean(initialLog)
+  const [form, setForm] = useState<JournalFormState>({
+    description_raw: initialLog?.description_raw ?? '',
+    kcal_estimate: initialLog ? String(initialLog.kcal_estimate) : '',
+    event_time: toTimeValue(initialLog?.event_at ?? null),
+    meal_type: (initialLog?.meal_type ?? mealType) as MealType,
+  })
   const [loading, setLoading] = useState(false)
 
-  async function syncSummary(summary: Summary) {
-    setSummary(summary)
-    await Promise.all([
-      refreshLogbookRange(date),
-      refreshActivities(date),
-      refreshProgressSeries(),
-      refreshBodyGoal(),
-      refreshEatFeed({ meal_type: inferMealTypeFromClock() }),
-    ])
+  async function save() {
+    if (auth.status !== 'ready') return
+    setLoading(true)
+    try {
+      if (isEdit && initialLog) {
+        const data = await api<{ summary: Summary }>(
+          `/api/meal-logs/${initialLog.id}`,
+          auth.headers,
+          {
+            method: 'PATCH',
+            body: JSON.stringify({
+              date,
+              meal_type: form.meal_type,
+              description_raw: form.description_raw,
+              kcal_estimate: Number(form.kcal_estimate),
+              event_at: toIsoDateTime(date, form.event_time),
+            }),
+          },
+        )
+        await onSynced(data.summary)
+      } else {
+        const data = await api<{ summary: Summary }>(
+          '/api/meal-logs/manual',
+          auth.headers,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              date,
+              meal_type: form.meal_type,
+              description_raw: form.description_raw,
+              kcal_estimate: Number(form.kcal_estimate),
+              event_at: toIsoDateTime(date, form.event_time),
+            }),
+          },
+        )
+        await onSynced(data.summary)
+      }
+      onDone()
+    } finally {
+      setLoading(false)
+    }
   }
 
-  async function createManual(description: string, kcal: number) {
+  async function saveQuickPick(description: string, kcal: number) {
     if (auth.status !== 'ready') return
     setLoading(true)
     try {
@@ -392,14 +434,30 @@ function InlineComposer({ mealType, date, onDone }: { mealType: string; date: st
           method: 'POST',
           body: JSON.stringify({
             date,
-            meal_type: mealType,
+            meal_type: form.meal_type,
             description_raw: description,
             kcal_estimate: kcal,
             event_at: toIsoDateTime(date, form.event_time),
           }),
         },
       )
-      await syncSummary(data.summary)
+      await onSynced(data.summary)
+      onDone()
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function remove() {
+    if (auth.status !== 'ready' || !initialLog) return
+    setLoading(true)
+    try {
+      const data = await api<{ summary: Summary }>(
+        `/api/meal-logs/${initialLog.id}`,
+        auth.headers,
+        { method: 'DELETE' },
+      )
+      await onSynced(data.summary)
       onDone()
     } finally {
       setLoading(false)
@@ -408,8 +466,17 @@ function InlineComposer({ mealType, date, onDone }: { mealType: string; date: st
 
   return (
     <div className="inline-editor">
-      <QuickPickList mealType={mealType} date={date} onSelect={createManual} />
+      {!isEdit ? <QuickPickList mealType={mealType} date={date} onSelect={saveQuickPick} /> : null}
       <div className="inline-grid">
+        <select
+          className="input-field"
+          value={form.meal_type}
+          onChange={(event) => setForm((current) => ({ ...current, meal_type: event.target.value as MealType }))}
+        >
+          {MEAL_TYPES.map((type) => (
+            <option key={type} value={type}>{MEAL_TYPE_LABELS[type]}</option>
+          ))}
+        </select>
         <input
           className="input-field"
           placeholder="例如：雞胸飯、拿鐵、蛋餅"
@@ -432,110 +499,19 @@ function InlineComposer({ mealType, date, onDone }: { mealType: string; date: st
       </div>
       <div className="inline-actions">
         <button className="btn btn-outline" type="button" onClick={onDone}>取消</button>
+        {isEdit ? (
+          <button className="btn btn-outline" type="button" disabled={loading} onClick={() => void remove()}>
+            刪除
+          </button>
+        ) : null}
         <button
           className="btn btn-primary"
           type="button"
           disabled={loading || !form.description_raw || !form.kcal_estimate}
-          onClick={() => void createManual(form.description_raw, Number(form.kcal_estimate))}
+          onClick={() => void save()}
         >
-          新增
+          {isEdit ? '更新' : '新增'}
         </button>
-      </div>
-    </div>
-  )
-}
-
-function InlineEditor({ log, date, onDone }: { log: MealLogEntry; date: string; onDone: () => void }) {
-  const { auth, setSummary, refreshActivities, refreshBodyGoal, refreshEatFeed, refreshLogbookRange, refreshProgressSeries } = useApp()
-  const [form, setForm] = useState({
-    meal_type: log.meal_type,
-    description_raw: log.description_raw,
-    kcal_estimate: String(log.kcal_estimate),
-    event_time: toTimeValue(log.event_at),
-  })
-  const [loading, setLoading] = useState(false)
-
-  async function syncSummary(summary: Summary) {
-    setSummary(summary)
-    await Promise.all([
-      refreshLogbookRange(date),
-      refreshActivities(date),
-      refreshProgressSeries(),
-      refreshBodyGoal(),
-      refreshEatFeed({ meal_type: inferMealTypeFromClock() }),
-    ])
-  }
-
-  async function save() {
-    if (auth.status !== 'ready') return
-    setLoading(true)
-    try {
-      const data = await api<{ summary: Summary }>(
-        `/api/meal-logs/${log.id}`,
-        auth.headers,
-        {
-          method: 'PATCH',
-          body: JSON.stringify({
-            meal_type: form.meal_type,
-            description_raw: form.description_raw,
-            kcal_estimate: Number(form.kcal_estimate),
-            event_at: toIsoDateTime(date, form.event_time),
-          }),
-        },
-      )
-      await syncSummary(data.summary)
-      onDone()
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function remove() {
-    if (auth.status !== 'ready') return
-    setLoading(true)
-    try {
-      const data = await api<{ summary: Summary }>(`/api/meal-logs/${log.id}`, auth.headers, { method: 'DELETE' })
-      await syncSummary(data.summary)
-      onDone()
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div className="inline-editor">
-      <div className="inline-grid">
-        <select
-          className="input-field"
-          value={form.meal_type}
-          onChange={(event) => setForm((current) => ({ ...current, meal_type: event.target.value }))}
-        >
-          {Object.entries(MEAL_TYPE_LABELS).map(([key, label]) => (
-            <option key={key} value={key}>{label}</option>
-          ))}
-        </select>
-        <input
-          className="input-field"
-          value={form.description_raw}
-          onChange={(event) => setForm((current) => ({ ...current, description_raw: event.target.value }))}
-        />
-        <input
-          className="input-field"
-          type="number"
-          value={form.kcal_estimate}
-          onChange={(event) => setForm((current) => ({ ...current, kcal_estimate: event.target.value }))}
-        />
-        <input
-          className="input-field"
-          type="time"
-          value={form.event_time}
-          onChange={(event) => setForm((current) => ({ ...current, event_time: event.target.value }))}
-        />
-      </div>
-      <div className="inline-actions">
-        <button className="btn btn-outline" type="button" onClick={onDone}>取消</button>
-        <button className="btn btn-secondary" type="button" disabled={loading} onClick={() => void remove()}>刪除</button>
-        <button className="btn btn-primary" type="button" disabled={loading} onClick={() => void save()}>儲存</button>
       </div>
     </div>
   )
@@ -545,184 +521,249 @@ function MealSection({
   mealType,
   logs,
   subtotal,
+  count,
+  activeEditor,
+  onOpenEditor,
+  onEditLog,
+  onCloseEditor,
+  onSynced,
   date,
-  addingMealType,
-  editingLogId,
-  onStartAdd,
-  onStopAdd,
-  onStartEdit,
-  onStopEdit,
 }: {
-  mealType: string
+  mealType: MealType
   logs: MealLogEntry[]
   subtotal: number
+  count: number
+  activeEditor: { mealType: MealType; log?: MealLogEntry } | null
+  onOpenEditor: (mealType: MealType) => void
+  onEditLog: (mealType: MealType, log: MealLogEntry) => void
+  onCloseEditor: () => void
+  onSynced: (summary: Summary) => Promise<void>
   date: string
-  addingMealType: string | null
-  editingLogId: number | null
-  onStartAdd: (mealType: string) => void
-  onStopAdd: () => void
-  onStartEdit: (id: number) => void
-  onStopEdit: () => void
 }) {
+  const isActive = activeEditor?.mealType === mealType
+  const activeLog = isActive ? activeEditor?.log : undefined
+
   return (
-    <section className="journal-section">
-      <button className="journal-section__header" type="button" onClick={() => onStartAdd(mealType)}>
+    <section className={`journal-section ${isActive ? 'journal-section--active' : ''}`}>
+      <button className="journal-section__header" type="button" onClick={() => onOpenEditor(mealType)}>
         <div>
           <strong>{MEAL_TYPE_LABELS[mealType]}</strong>
-          <span>{logs.length ? `${logs.length} 筆紀錄` : '還沒有記錄，點一下直接新增'}</span>
+          <span>{count ? `${count} 筆` : '尚未記錄'}</span>
         </div>
         <div className="journal-section__kcal">
           <strong>{subtotal} kcal</strong>
-          <span>+</span>
+          <span className="journal-section__plus">＋</span>
         </div>
       </button>
-
-      {addingMealType === mealType ? <InlineComposer mealType={mealType} date={date} onDone={onStopAdd} /> : null}
-
-      <div className="journal-entry-list">
-        {logs.length === 0 && addingMealType !== mealType ? (
-          <div className="empty-row">這餐還沒有東西，點上面直接新增。</div>
-        ) : null}
-        {logs.map((log) => (
-          <div key={log.id} className="journal-entry-card">
-            <button className="journal-entry-row" type="button" onClick={() => onStartEdit(log.id)}>
+      {logs.length ? (
+        <div className="journal-entry-list">
+          {logs.map((log) => (
+            <button key={log.id} className="journal-entry-row" type="button" onClick={() => onEditLog(mealType, log)}>
               <div>
                 <strong>{log.description_raw}</strong>
-                <span>{log.event_at ? toTimeValue(log.event_at) : '未指定時間'}</span>
+                <span>{formatTimeLabel(log.event_at)}{formatTimeLabel(log.event_at) ? ' · ' : ''}{log.kcal_estimate} kcal</span>
               </div>
-              <strong>{log.kcal_estimate} kcal</strong>
+              <strong>{log.kcal_estimate}</strong>
             </button>
-            {editingLogId === log.id ? <InlineEditor log={log} date={date} onDone={onStopEdit} /> : null}
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-row">還沒有記錄，點上方即可新增。</div>
+      )}
+      {isActive ? (
+        <InlineEditor
+          mealType={mealType}
+          date={date}
+          initialLog={activeLog}
+          onDone={onCloseEditor}
+          onSynced={onSynced}
+        />
+      ) : null}
     </section>
   )
 }
 
-function InsightsContent({ summary, days }: { summary: Summary; days: LogbookRangeDay[] }) {
-  const maxKcal = Math.max(...days.map((day) => day.consumed_kcal || 0), summary.target_kcal || 1)
-
+function TrendBars({ points }: { points: TrendPoint[] }) {
+  if (!points.length) return <div className="empty-row empty-row--sheet">還沒有足夠資料畫出趨勢。</div>
+  const max = Math.max(...points.map((point) => Math.max(Number(point.value), Number(point.target ?? 0), 1)))
   return (
-    <div className="sheet-stack">
-      <section className="sheet-card">
-        <div className="sheet-card__header">
-          <h4>今天摘要</h4>
-          <span>{summary.consumed_kcal} / {summary.target_kcal} kcal</span>
-        </div>
-        <div className="metric-pill-row">
-          <div className="metric-pill">
-            <span>剩餘</span>
-            <strong>{summary.remaining_kcal}</strong>
+    <div className="trend-bars">
+      {points.slice(-10).map((point) => (
+        <div key={point.date} className="trend-bars__item">
+          <div className="trend-bars__track">
+            {point.target != null ? (
+              <div className="trend-bars__target" style={{ height: `${Math.max(8, (Number(point.target) / max) * 100)}%` }} />
+            ) : null}
+            <div className="trend-bars__fill" style={{ height: `${Math.max(8, (Number(point.value) / max) * 100)}%` }} />
           </div>
-          <div className="metric-pill">
-            <span>活動加回</span>
-            <strong>+{summary.today_activity_burn_kcal}</strong>
-          </div>
-          <div className="metric-pill">
-            <span>已記錄餐數</span>
-            <strong>{summary.logs.length}</strong>
-          </div>
+          <span>{formatShortDate(point.date)}</span>
         </div>
-      </section>
-      <section className="sheet-card">
-        <div className="sheet-card__header">
-          <h4>最近 7 天</h4>
-          <span>已吃 vs 目標</span>
-        </div>
-        <div className="mini-bars">
-          {days.map((day) => (
-            <div key={day.date} className="mini-bars__item">
-              <div className="mini-bars__track">
-                <div className="mini-bars__fill" style={{ height: `${Math.max(8, (day.consumed_kcal / maxKcal) * 100)}%` }} />
-              </div>
-              <span>{day.date.slice(5)}</span>
-            </div>
-          ))}
-        </div>
-      </section>
+      ))}
     </div>
   )
 }
 
+function buildTrendPoints(
+  range: '7d' | '30d' | '90d',
+  logbookRange: LogbookRangeDay[],
+  progressSeries: ProgressSeries | null,
+): TrendPoint[] {
+  if (range === '7d') {
+    return logbookRange.map((day) => ({
+      date: day.date,
+      value: day.consumed_kcal,
+      target: day.target_kcal,
+    }))
+  }
+  return (progressSeries?.calorie_points ?? []).map((point) => ({
+    date: point.date,
+    value: Number(point.value),
+    target: point.target,
+  }))
+}
+
 export default function TodayPage() {
-  const { auth, summary, selectedDate, refreshActivities, refreshLogbookRange, refreshSummary, logbookRange } = useApp()
-  const [addingMealType, setAddingMealType] = useState<string | null>(null)
-  const [editingLogId, setEditingLogId] = useState<number | null>(null)
+  const {
+    auth,
+    summary,
+    selectedDate,
+    draft,
+    notifications,
+    logbookRange,
+    progressSeries,
+    refreshSummary,
+    refreshLogbookRange,
+    refreshNotifications,
+    refreshActivities,
+    refreshBodyGoal,
+    refreshProgressSeries,
+    refreshEatFeed,
+    setSummary,
+  } = useApp()
+  const [activeEditor, setActiveEditor] = useState<{ mealType: MealType; log?: MealLogEntry } | null>(null)
   const [insightsOpen, setInsightsOpen] = useState(false)
+  const [trendRange, setTrendRange] = useState<'7d' | '30d' | '90d'>('7d')
 
   useEffect(() => {
     if (auth.status !== 'ready') return
-    void refreshSummary(selectedDate)
-  }, [auth.status, refreshSummary, selectedDate])
+    void refreshSummary()
+    void refreshLogbookRange()
+    void refreshNotifications()
+  }, [auth.status, refreshLogbookRange, refreshNotifications, refreshSummary])
+
+  useEffect(() => {
+    if (auth.status !== 'ready' || !insightsOpen || trendRange === '7d') return
+    void refreshProgressSeries(trendRange)
+  }, [auth.status, insightsOpen, refreshProgressSeries, trendRange])
 
   const groupedLogs = useMemo(() => {
-    const source = summary?.logs ?? []
-    return {
-      breakfast: source.filter((log) => log.meal_type === 'breakfast'),
-      lunch: source.filter((log) => log.meal_type === 'lunch'),
-      dinner: source.filter((log) => log.meal_type === 'dinner'),
-      snack: source.filter((log) => log.meal_type === 'snack'),
+    const grouped: Record<MealType, MealLogEntry[]> = {
+      breakfast: [],
+      lunch: [],
+      dinner: [],
+      snack: [],
     }
+    if (!summary) return grouped
+    summary.logs.forEach((log) => {
+      const key = log.meal_type as MealType
+      if (grouped[key]) grouped[key].push(log)
+    })
+    MEAL_TYPES.forEach((type) => {
+      grouped[type].sort((a, b) => String(a.event_at ?? '').localeCompare(String(b.event_at ?? '')))
+    })
+    return grouped
   }, [summary])
+
+  const pendingCount = (draft ? 1 : 0) + (summary?.pending_async_updates_count ?? 0)
+
+  const trendPoints = useMemo(
+    () => buildTrendPoints(trendRange, logbookRange, progressSeries),
+    [logbookRange, progressSeries, trendRange],
+  )
 
   if (auth.status !== 'ready' || !summary) {
     return <div className="page-container"><div className="page-skeleton" /></div>
   }
 
-  async function moveDate(diff: number) {
-    const target = new Date(`${selectedDate}T00:00:00`)
-    target.setDate(target.getDate() + diff)
-    const nextDate = target.toISOString().slice(0, 10)
-    setAddingMealType(null)
-    setEditingLogId(null)
-    await Promise.all([refreshSummary(nextDate), refreshLogbookRange(nextDate), refreshActivities(nextDate)])
+  async function syncAfterSummary(summaryData: Summary) {
+    setSummary(summaryData)
+    await Promise.all([
+      refreshLogbookRange(summaryData.date),
+      refreshActivities(summaryData.date),
+      refreshProgressSeries(),
+      refreshBodyGoal(),
+      refreshEatFeed({ meal_type: inferMealTypeFromClock() }),
+    ])
   }
 
-  function openAdd(mealType: string) {
-    setEditingLogId(null)
-    setAddingMealType((current) => current === mealType ? null : mealType)
+  async function refreshForDate(dateValue: string) {
+    await Promise.all([
+      refreshSummary(dateValue),
+      refreshLogbookRange(dateValue),
+      refreshNotifications(),
+      refreshActivities(dateValue),
+    ])
   }
 
-  function openEdit(logId: number) {
-    setAddingMealType(null)
-    setEditingLogId((current) => current === logId ? null : logId)
+  function handleMoveDate(diff: number) {
+    const next = addDays(selectedDate, diff)
+    void refreshForDate(next)
   }
 
   return (
     <div className="page-container" id="page-today">
       <DailyHeader
-        date={selectedDate}
+        date={summary.date}
         remainingKcal={summary.remaining_kcal}
-        pendingCount={summary.pending_async_updates_count}
-        onMoveDate={moveDate}
+        pendingCount={pendingCount}
+        onMoveDate={handleMoveDate}
         onOpenInsights={() => setInsightsOpen(true)}
       />
 
-      <DraftInbox />
-      <AsyncInbox />
+      {draft ? <DraftInbox draft={draft} onSynced={syncAfterSummary} /> : null}
+      {notifications.length ? <AsyncInbox onRefresh={refreshSummary} /> : null}
       <RecoveryBanner summary={summary} />
 
       <div className="journal-stack">
-        {(['breakfast', 'lunch', 'dinner', 'snack'] as const).map((mealType) => (
+        {MEAL_TYPES.map((mealType) => (
           <MealSection
             key={mealType}
             mealType={mealType}
             logs={groupedLogs[mealType]}
             subtotal={summary.meal_subtotals?.[mealType] ?? 0}
-            date={selectedDate}
-            addingMealType={addingMealType}
-            editingLogId={editingLogId}
-            onStartAdd={openAdd}
-            onStopAdd={() => setAddingMealType(null)}
-            onStartEdit={openEdit}
-            onStopEdit={() => setEditingLogId(null)}
+            count={summary.meal_counts?.[mealType] ?? groupedLogs[mealType].length}
+            activeEditor={activeEditor}
+            onOpenEditor={(type) => setActiveEditor({ mealType: type })}
+            onEditLog={(type, log) => setActiveEditor({ mealType: type, log })}
+            onCloseEditor={() => setActiveEditor(null)}
+            onSynced={syncAfterSummary}
+            date={summary.date}
           />
         ))}
       </div>
 
-      <FullScreenSheet isOpen={insightsOpen} onClose={() => setInsightsOpen(false)} title="日誌趨勢">
-        <InsightsContent summary={summary} days={logbookRange} />
+      <FullScreenSheet isOpen={insightsOpen} onClose={() => setInsightsOpen(false)} title="趨勢回顧">
+        <div className="sheet-stack">
+          <div className="chip-row">
+            {['7d', '30d', '90d'].map((range) => (
+              <button
+                key={range}
+                className={`chip-button ${trendRange === range ? 'chip-button--active' : ''}`}
+                type="button"
+                onClick={() => setTrendRange(range as '7d' | '30d' | '90d')}
+              >
+                {range.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <section className="sheet-card">
+            <div className="sheet-card__header">
+              <h4>攝取趨勢</h4>
+              <span>{trendRange.toUpperCase()}</span>
+            </div>
+            <TrendBars points={trendPoints} />
+          </section>
+        </div>
       </FullScreenSheet>
     </div>
   )
