@@ -1,0 +1,54 @@
+[
+  {
+    "name": "FamilyMart 濃韻抹茶Q堤",
+    "aliases": ["familymart matcha q donut", "濃韻抹茶q堤", "全家濃韻抹茶q堤"],
+    "chain_id": "familymart",
+    "category": "dessert_sku",
+    "serving_unit": "1 item",
+    "kcal": 199,
+    "source_url": "https://www.family.com.tw/Marketing/zh/FreshFood/Product",
+    "observed_date": "2026-03-19",
+    "volatility": "high",
+    "pack_eligibility": "official_current_sku",
+    "notes": "Current official fresh-food page SKU with named item and published calories."
+  },
+  {
+    "name": "FamilyMart 古早味甘梅芭樂 (超值盒)",
+    "aliases": ["familymart guava box", "古早味甘梅芭樂", "全家甘梅芭樂"],
+    "chain_id": "familymart",
+    "category": "fruit_sku",
+    "serving_unit": "1 box",
+    "kcal": 155,
+    "source_url": "https://www.family.com.tw/Marketing/zh/FreshFood/Product",
+    "observed_date": "2026-03-19",
+    "volatility": "medium",
+    "pack_eligibility": "official_current_sku",
+    "notes": "Named official SKU from the FamilyMart fresh-food hub."
+  },
+  {
+    "name": "FamilyMart 履歷兩種番茄一起吃 (超值盒)",
+    "aliases": ["familymart tomato box", "履歷兩種番茄一起吃", "全家番茄盒"],
+    "chain_id": "familymart",
+    "category": "fruit_sku",
+    "serving_unit": "1 box",
+    "kcal": 103,
+    "source_url": "https://www.family.com.tw/Marketing/zh/FreshFood/Product",
+    "observed_date": "2026-03-19",
+    "volatility": "medium",
+    "pack_eligibility": "official_current_sku",
+    "notes": "Rounded from the official page value of 102.6 kcal."
+  },
+  {
+    "name": "FamilyMart 美國糖蜂蘋果",
+    "aliases": ["familymart sugarbee apple", "美國糖蜂蘋果", "全家糖蜂蘋果"],
+    "chain_id": "familymart",
+    "category": "fruit_sku",
+    "serving_unit": "1 item",
+    "kcal": 84,
+    "source_url": "https://www.family.com.tw/Marketing/zh/FreshFood/Product",
+    "observed_date": "2026-03-19",
+    "volatility": "medium",
+    "pack_eligibility": "official_current_sku",
+    "notes": "Rounded from the official page value of 83.9 kcal."
+  }
+]

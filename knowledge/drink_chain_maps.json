@@ -1,0 +1,176 @@
+[
+  {
+    "name": "COMEBUY chain normalization",
+    "display_name": "COMEBUY",
+    "aliases": ["comebuy", "comebuy tea", "comebuy menu", "珍奶", "手搖飲"],
+    "category": "drink_chain",
+    "chain_id": "comebuy",
+    "priority": "p0",
+    "official_menu_url": "https://www.comebuy2002.com.tw/products-detail/comebuy_menu/",
+    "official_nutrition_url": "https://www.comebuy2002.com.tw/safety_promise-detail/calorie01/",
+    "official_store_locator_url": "https://www.comebuy2002.com.tw/store/Taiwan/",
+    "has_official_nutrition": true,
+    "source_confidence": "high",
+    "observed_date": "2026-03-19",
+    "size_map": [
+      {
+        "chain_label": "M",
+        "normalized_size": "medium",
+        "ml_low": 500,
+        "ml_high": 550,
+        "confidence": "medium"
+      },
+      {
+        "chain_label": "L",
+        "normalized_size": "large",
+        "ml_low": 650,
+        "ml_high": 700,
+        "confidence": "medium"
+      }
+    ],
+    "sugar_map": [
+      {"normalized_level": "zero", "aliases": ["無糖", "0糖", "zero sugar"]},
+      {"normalized_level": "quarter", "aliases": ["微糖", "quarter sugar"]},
+      {"normalized_level": "half", "aliases": ["半糖", "half sugar"]},
+      {"normalized_level": "less", "aliases": ["少糖", "less sugar"]},
+      {"normalized_level": "full", "aliases": ["全糖", "正常糖", "full sugar"]}
+    ],
+    "ice_map": [
+      {"normalized_level": "hot", "aliases": ["熱", "hot"]},
+      {"normalized_level": "none", "aliases": ["去冰", "no ice"]},
+      {"normalized_level": "less", "aliases": ["微冰", "少冰", "less ice"]},
+      {"normalized_level": "regular", "aliases": ["正常冰", "regular ice"]}
+    ],
+    "toppings": [
+      {"topping_id": "pearls", "display_name": "珍珠", "aliases": ["pearls", "boba", "波霸"], "is_item_specific": false},
+      {"topping_id": "jelly", "display_name": "凍類", "aliases": ["jelly"], "is_item_specific": false},
+      {"topping_id": "cream", "display_name": "奶蓋", "aliases": ["cream foam"], "is_item_specific": true}
+    ],
+    "item_constraints": [
+      "Exact calories depend on base drink, cup size, sugar level, and toppings.",
+      "Use the official nutrition page for item-specific calories when the drink name is known."
+    ],
+    "safe_orders": [
+      "Single-origin tea, no sugar, less ice.",
+      "Oolong or green tea with no topping.",
+      "Milk tea only after clarifying sugar and pearls."
+    ],
+    "notes": "COMEBUY is the strongest first-wave permanent drink chain because it has official menu, nutrition, and locator surfaces."
+  },
+  {
+    "name": "KEBUKE chain normalization",
+    "display_name": "可不可熟成紅茶 KEBUKE",
+    "aliases": ["可不可", "可不可熟成紅茶", "kebuke", "kebuke menu"],
+    "category": "drink_chain",
+    "chain_id": "kebuke",
+    "priority": "p0",
+    "official_menu_url": "https://kebuke.com/menu/",
+    "official_nutrition_url": "https://kebuke.com/menu/",
+    "official_store_locator_url": "https://kebuke.com/menu/",
+    "has_official_nutrition": true,
+    "source_confidence": "high",
+    "observed_date": "2026-03-19",
+    "size_map": [
+      {
+        "chain_label": "中",
+        "normalized_size": "medium",
+        "ml_exact": 500,
+        "confidence": "high"
+      },
+      {
+        "chain_label": "大",
+        "normalized_size": "large",
+        "ml_exact": 700,
+        "confidence": "high"
+      }
+    ],
+    "sugar_map": [
+      {"normalized_level": "zero", "aliases": ["無糖", "0糖"]},
+      {"normalized_level": "quarter", "aliases": ["微糖"]},
+      {"normalized_level": "half", "aliases": ["半糖"]},
+      {"normalized_level": "less", "aliases": ["少糖"]},
+      {"normalized_level": "full", "aliases": ["全糖", "正常糖"]}
+    ],
+    "ice_map": [
+      {"normalized_level": "hot", "aliases": ["熱"], "notes": "Some toppings only support warm or hot drinks."},
+      {"normalized_level": "none", "aliases": ["去冰"]},
+      {"normalized_level": "less", "aliases": ["微冰", "少冰"]},
+      {"normalized_level": "regular", "aliases": ["正常冰"]}
+    ],
+    "toppings": [
+      {"topping_id": "white_pearls", "display_name": "白玉", "aliases": ["white pearls", "白玉"], "is_item_specific": false},
+      {"topping_id": "water_jelly", "display_name": "水玉", "aliases": ["水玉"], "is_item_specific": false},
+      {"topping_id": "black_jelly", "display_name": "墨玉", "aliases": ["墨玉"], "is_item_specific": false},
+      {"topping_id": "plum_jelly", "display_name": "春梅凍", "aliases": ["春梅凍"], "is_item_specific": false},
+      {"topping_id": "buckwheat_jelly", "display_name": "榛果蕎麥凍", "aliases": ["榛果蕎麥凍"], "is_item_specific": false}
+    ],
+    "item_constraints": [
+      "Official menu states large is 700 ml and medium is 500 ml.",
+      "Some cool-formula or ice-cream drinks have minimum ice constraints.",
+      "Official menu publishes sugar and calorie values for many named drinks."
+    ],
+    "safe_orders": [
+      "熟成紅茶 or 春芽冷露 with no sugar.",
+      "Clarify white pearls or cool-formula add-ons before estimating calories.",
+      "Use milk-tea calories only after confirming medium or large."
+    ],
+    "notes": "KEBUKE is strong enough for a permanent chain map plus selected structured drink cards."
+  },
+  {
+    "name": "Milksha chain normalization",
+    "display_name": "迷客夏 Milksha",
+    "aliases": ["迷客夏", "milksha", "milksha products"],
+    "category": "drink_chain",
+    "chain_id": "milksha",
+    "priority": "p0",
+    "official_menu_url": "https://www.milksha.com/products.php",
+    "official_nutrition_url": "",
+    "official_store_locator_url": "https://www.milksha.com/store.php",
+    "has_official_nutrition": false,
+    "source_confidence": "medium",
+    "observed_date": "2026-03-19",
+    "size_map": [
+      {
+        "chain_label": "M",
+        "normalized_size": "medium",
+        "ml_low": 500,
+        "ml_high": 550,
+        "confidence": "low"
+      },
+      {
+        "chain_label": "L",
+        "normalized_size": "large",
+        "ml_low": 650,
+        "ml_high": 700,
+        "confidence": "low"
+      }
+    ],
+    "sugar_map": [
+      {"normalized_level": "zero", "aliases": ["無糖", "0糖"]},
+      {"normalized_level": "quarter", "aliases": ["微糖"]},
+      {"normalized_level": "half", "aliases": ["半糖"]},
+      {"normalized_level": "less", "aliases": ["少糖"]},
+      {"normalized_level": "full", "aliases": ["正常糖", "全糖"]}
+    ],
+    "ice_map": [
+      {"normalized_level": "hot", "aliases": ["熱"]},
+      {"normalized_level": "none", "aliases": ["去冰"]},
+      {"normalized_level": "less", "aliases": ["微冰", "少冰"]},
+      {"normalized_level": "regular", "aliases": ["正常冰"]}
+    ],
+    "toppings": [
+      {"topping_id": "honey_pearls", "display_name": "珍珠", "aliases": ["pearls", "珍珠"], "is_item_specific": false},
+      {"topping_id": "grass_jelly", "display_name": "仙草凍", "aliases": ["grass jelly", "仙草凍"], "is_item_specific": false},
+      {"topping_id": "red_bean", "display_name": "紅豆", "aliases": ["red bean", "紅豆"], "is_item_specific": false}
+    ],
+    "item_constraints": [
+      "Current permanent pack keeps chain taxonomy and toppings, but exact calories stay search fallback unless an official nutrition surface is confirmed."
+    ],
+    "safe_orders": [
+      "Tea base or fresh-milk tea with no pearls.",
+      "Clarify whether the drink is pure tea, milk tea, or fresh milk series.",
+      "Treat toppings as a separate calorie lane."
+    ],
+    "notes": "Milksha has stable official product taxonomy and topping coverage, but weaker official nutrition exposure than COMEBUY or KEBUKE."
+  }
+]

@@ -1,0 +1,567 @@
+import { useState } from 'react'
+import { useApp } from '../AppContext'
+import { api } from '../api'
+import { FullScreenSheet } from '../components/Sheets'
+import { MEAL_TYPE_LABELS } from '../types'
+import type { ActivityAdjustment, BodyGoal, Compensation, MealEvent, ProgressSeries, ProgressSeriesPoint, Summary } from '../types'
+
+function directionLabel(direction: string): string {
+  switch (direction) {
+    case 'down':
+      return '最近有往目標前進'
+    case 'up':
+      return '最近有往上走'
+    case 'flat':
+      return '最近大致持平'
+    default:
+      return '資料還不夠穩定'
+  }
+}
+
+function weeklyStatusLabel(status: string): string {
+  switch (status) {
+    case 'meaningfully_over':
+      return '本週明顯超標'
+    case 'slightly_over':
+      return '本週略高於目標'
+    case 'meaningfully_under':
+      return '本週低於目標很多'
+    default:
+      return '本週大致在軌道上'
+  }
+}
+
+function BodyHero({ summary, bodyGoal, onLogWeight }: { summary: Summary; bodyGoal: BodyGoal | null; onLogWeight: (weight: string) => Promise<void> }) {
+  const [weight, setWeight] = useState(summary.latest_weight ? String(summary.latest_weight) : '')
+  const delta = summary.delta_to_goal_kg ?? bodyGoal?.delta_to_goal_kg
+
+  return (
+    <section className="body-hero">
+      <div className="body-hero__header">
+        <span>目前體重</span>
+        <strong>{summary.latest_weight ? `${summary.latest_weight} kg` : '尚未記錄'}</strong>
+      </div>
+      <div className="body-hero__meta">
+        <span>目標 {bodyGoal?.target_weight_kg ? `${bodyGoal.target_weight_kg} kg` : '尚未設定'}</span>
+        {delta != null ? <span>差距 {Math.abs(delta).toFixed(1)} kg</span> : null}
+      </div>
+      <div className="body-hero__inline">
+        <input
+          className="input-field"
+          type="number"
+          step="0.1"
+          placeholder="記錄今天的體重"
+          value={weight}
+          onChange={(event) => setWeight(event.target.value)}
+        />
+        <button className="btn btn-primary" type="button" disabled={!weight} onClick={() => void onLogWeight(weight)}>更新</button>
+      </div>
+    </section>
+  )
+}
+
+function MetricRow({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="metric-pill">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {hint ? <small>{hint}</small> : null}
+    </div>
+  )
+}
+
+function StrategyCard({
+  summary,
+  compensation,
+  onBuildRecovery,
+}: {
+  summary: Summary
+  compensation: Compensation | null
+  onBuildRecovery: () => Promise<void>
+}) {
+  return (
+    <section className="summary-card">
+      <div className="summary-card__header summary-card__header--static">
+        <div>
+          <strong>今天的策略</strong>
+          <span>{directionLabel(summary.fourteen_day_direction)}</span>
+        </div>
+      </div>
+      <div className="strategy-grid">
+        <div className="strategy-grid__item">
+          <span>今天可吃</span>
+          <strong>{summary.effective_target_kcal} kcal</strong>
+        </div>
+        <div className="strategy-grid__item">
+          <span>本週狀態</span>
+          <strong>{weeklyStatusLabel(summary.weekly_drift_status)}</strong>
+        </div>
+      </div>
+      <div className="strategy-note">{summary.target_adjustment_hint}</div>
+      {summary.recovery_overlay?.active ? (
+        <div className="support-banner">
+          回收模式已啟動，今天目標 {summary.recovery_overlay.adjusted_target_kcal ?? summary.effective_target_kcal} kcal。
+        </div>
+      ) : null}
+      {summary.should_offer_weekly_recovery ? (
+        <div className="inline-actions inline-actions--wide">
+          <button className="btn btn-outline" type="button" onClick={() => void onBuildRecovery()}>
+            產生溫和回收方案
+          </button>
+        </div>
+      ) : null}
+      {compensation?.options?.length ? (
+        <div className="sheet-list">
+          {compensation.options.map((option) => (
+            <div key={option.label} className="explore-row">
+              <div>
+                <strong>{option.label}</strong>
+                <span>{option.note}</span>
+              </div>
+              <span>-{option.daily_adjustment} kcal</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function WeeklyReviewCard({ summary, series }: { summary: Summary; series: ProgressSeries | null }) {
+  const lastWeightPoints = series?.weight_points.slice(-7) ?? []
+  const lastCaloriePoints = series?.calorie_points.slice(-7) ?? []
+  const weightDelta = lastWeightPoints.length >= 2
+    ? Number(lastWeightPoints[lastWeightPoints.length - 1].value) - Number(lastWeightPoints[0].value)
+    : null
+  const onTrackDays = lastCaloriePoints.filter((point) => point.target != null && Number(point.value) <= Number(point.target) * 1.05).length
+
+  let insight = '這週先維持現在節奏，讓趨勢繼續累積。'
+  if (summary.weekly_drift_status === 'meaningfully_over') {
+    insight = `本週比目標多了 ${summary.weekly_drift_kcal} kcal，建議用 1-3 天溫和收回。`
+  } else if (summary.fourteen_day_direction === 'down') {
+    insight = '最近體重方向仍在往下，先維持現在的做法。'
+  } else if (summary.today_activity_burn_kcal > 0) {
+    insight = '最近有把活動量補進模型，記得持續回報真實活動。'
+  }
+
+  return (
+    <section className="summary-card">
+      <div className="summary-card__header summary-card__header--static">
+        <div>
+          <strong>本週回顧</strong>
+          <span>{weeklyStatusLabel(summary.weekly_drift_status)}</span>
+        </div>
+      </div>
+      <div className="strategy-grid">
+        <div className="strategy-grid__item">
+          <span>本週熱量差</span>
+          <strong>{summary.weekly_drift_kcal > 0 ? '+' : ''}{summary.weekly_drift_kcal} kcal</strong>
+        </div>
+        <div className="strategy-grid__item">
+          <span>達標天數</span>
+          <strong>{onTrackDays} / 7 天</strong>
+        </div>
+        <div className="strategy-grid__item">
+          <span>本週已吃</span>
+          <strong>{summary.weekly_consumed_kcal} kcal</strong>
+        </div>
+        <div className="strategy-grid__item">
+          <span>體重變化</span>
+          <strong>{weightDelta == null ? '資料不足' : `${weightDelta > 0 ? '+' : ''}${weightDelta.toFixed(1)} kg`}</strong>
+        </div>
+      </div>
+      <div className="strategy-note">{insight}</div>
+    </section>
+  )
+}
+
+function ActivitySummary({
+  activities,
+  selectedDate,
+  onSaved,
+}: {
+  activities: ActivityAdjustment[]
+  selectedDate: string
+  onSaved: (summary: Summary) => Promise<void>
+}) {
+  const { auth } = useApp()
+  const [expanded, setExpanded] = useState(false)
+  const [form, setForm] = useState({ label: '', estimated_burn_kcal: '', duration_minutes: '' })
+
+  async function createAdjustment() {
+    if (auth.status !== 'ready' || !form.label || !form.estimated_burn_kcal) return
+    const data = await api<{ summary: Summary }>(
+      '/api/activity-adjustments',
+      auth.headers,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          date: selectedDate,
+          label: form.label,
+          estimated_burn_kcal: Number(form.estimated_burn_kcal),
+          duration_minutes: form.duration_minutes ? Number(form.duration_minutes) : undefined,
+        }),
+      },
+    )
+    setForm({ label: '', estimated_burn_kcal: '', duration_minutes: '' })
+    await onSaved(data.summary)
+    setExpanded(false)
+  }
+
+  return (
+    <section className="summary-card">
+      <button className="summary-card__header" type="button" onClick={() => setExpanded((current) => !current)}>
+        <div>
+          <strong>今天的額外消耗</strong>
+          <span>{activities.length ? `${activities.length} 筆活動紀錄` : '還沒有補充今天的活動'}</span>
+        </div>
+        <span>{expanded ? '收起' : '展開'}</span>
+      </button>
+
+      {activities.length ? (
+        <div className="activity-list">
+          {activities.slice(0, expanded ? activities.length : 2).map((activity) => (
+            <div key={activity.id} className="activity-row">
+              <div>
+                <strong>{activity.label}</strong>
+                <span>{activity.duration_minutes ? `${activity.duration_minutes} 分鐘` : activity.source}</span>
+              </div>
+              <strong>+{activity.estimated_burn_kcal}</strong>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {expanded ? (
+        <div className="inline-editor">
+          <div className="inline-grid">
+            <input className="input-field" placeholder="例如：跳舞 90 分鐘" value={form.label} onChange={(event) => setForm((current) => ({ ...current, label: event.target.value }))} />
+            <input className="input-field" type="number" placeholder="估計消耗 kcal" value={form.estimated_burn_kcal} onChange={(event) => setForm((current) => ({ ...current, estimated_burn_kcal: event.target.value }))} />
+            <input className="input-field" type="number" placeholder="分鐘（選填）" value={form.duration_minutes} onChange={(event) => setForm((current) => ({ ...current, duration_minutes: event.target.value }))} />
+          </div>
+          <div className="inline-actions">
+            <button className="btn btn-outline" type="button" onClick={() => setExpanded(false)}>取消</button>
+            <button className="btn btn-primary" type="button" disabled={!form.label || !form.estimated_burn_kcal} onClick={() => void createAdjustment()}>
+              加入活動
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function PlanEventsCard() {
+  const { planEvents } = useApp()
+
+  if (!planEvents.length) return null
+
+  return (
+    <section className="summary-card">
+      <div className="summary-card__header summary-card__header--static">
+        <div>
+          <strong>接下來 14 天</strong>
+          <span>系統已知的聚餐或額外熱量事件</span>
+        </div>
+      </div>
+      <div className="sheet-list">
+        {planEvents.slice(0, 4).map((event) => (
+          <div key={event.id} className="explore-row">
+            <div>
+              <strong>{event.title || event.event_type}</strong>
+              <span>{event.date}</span>
+            </div>
+            <span>+{event.expected_extra_kcal} kcal</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function MealEventPlannerCard({
+  mealEvents,
+  onCreate,
+}: {
+  mealEvents: MealEvent[]
+  onCreate: (draft: { event_date: string; meal_type: 'breakfast' | 'lunch' | 'dinner' | 'snack'; title: string; expected_kcal?: number; notes?: string }) => Promise<void>
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [form, setForm] = useState({
+    event_date: new Date().toISOString().slice(0, 10),
+    meal_type: 'dinner' as const,
+    title: '',
+    expected_kcal: '',
+    notes: '',
+  })
+
+  async function save() {
+    if (!form.title || !form.event_date) return
+    await onCreate({
+      event_date: form.event_date,
+      meal_type: form.meal_type,
+      title: form.title,
+      expected_kcal: form.expected_kcal ? Number(form.expected_kcal) : undefined,
+      notes: form.notes || undefined,
+    })
+    setForm({
+      event_date: new Date().toISOString().slice(0, 10),
+      meal_type: 'dinner',
+      title: '',
+      expected_kcal: '',
+      notes: '',
+    })
+    setExpanded(false)
+  }
+
+  return (
+    <section className="summary-card">
+      <button className="summary-card__header" type="button" onClick={() => setExpanded((current) => !current)}>
+        <div>
+          <strong>預記錄大餐</strong>
+          <span>{mealEvents.length ? `${mealEvents.length} 個未來餐次` : '先把聚餐或大餐記下來，之後我會提前提醒你。'}</span>
+        </div>
+        <span>{expanded ? '收起' : '新增'}</span>
+      </button>
+
+      {mealEvents.length ? (
+        <div className="sheet-list">
+              {mealEvents.slice(0, expanded ? mealEvents.length : 2).map((event) => (
+                <div key={event.id} className="explore-row">
+                  <div>
+                    <strong>{event.title}</strong>
+                    <span>{event.event_date} · {MEAL_TYPE_LABELS[event.meal_type]}</span>
+                  </div>
+                  <span>{event.expected_kcal} kcal</span>
+                </div>
+              ))}
+        </div>
+      ) : null}
+
+      {expanded ? (
+        <div className="inline-editor">
+          <div className="inline-grid">
+            <input className="input-field" type="date" value={form.event_date} onChange={(event) => setForm((current) => ({ ...current, event_date: event.target.value }))} />
+            <select className="input-field" value={form.meal_type} onChange={(event) => setForm((current) => ({ ...current, meal_type: event.target.value as typeof form.meal_type }))}>
+              <option value="breakfast">早餐</option>
+              <option value="lunch">午餐</option>
+              <option value="dinner">晚餐</option>
+              <option value="snack">點心</option>
+            </select>
+            <input className="input-field" placeholder="例如：週五晚餐聚餐" value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} />
+            <input className="input-field" type="number" placeholder="預估 kcal（可空白）" value={form.expected_kcal} onChange={(event) => setForm((current) => ({ ...current, expected_kcal: event.target.value }))} />
+            <input className="input-field" placeholder="備註（可選）" value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} />
+          </div>
+          <div className="inline-actions">
+            <button className="btn btn-outline" type="button" onClick={() => setExpanded(false)}>取消</button>
+            <button className="btn btn-primary" type="button" disabled={!form.title || !form.event_date} onClick={() => void save()}>
+              儲存事件
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function ProgressInsights({ series, range, onChangeRange }: { series: ProgressSeries | null; range: string; onChangeRange: (range: string) => void }) {
+  return (
+    <div className="sheet-stack">
+      <div className="chip-row">
+        {['7d', '30d', '90d', '1y'].map((item) => (
+          <button key={item} className={`chip-button ${range === item ? 'chip-button--active' : ''}`} type="button" onClick={() => onChangeRange(item)}>
+            {item.toUpperCase()}
+          </button>
+        ))}
+      </div>
+      <section className="sheet-card">
+        <div className="sheet-card__header">
+          <h4>體重趨勢</h4>
+          <span>{series?.range ?? range}</span>
+        </div>
+        <SimpleLine points={series?.weight_points ?? []} unit="kg" />
+      </section>
+      <section className="sheet-card">
+        <div className="sheet-card__header">
+          <h4>攝取 vs 目標</h4>
+          <span>最近 8 個時間點</span>
+        </div>
+        <SimpleBars points={series?.calorie_points ?? []} />
+      </section>
+    </div>
+  )
+}
+
+function SimpleLine({ points, unit }: { points: ProgressSeriesPoint[]; unit: string }) {
+  if (!points.length) return <div className="empty-row empty-row--sheet">還沒有足夠資料畫出趨勢。</div>
+  const values = points.map((point) => Number(point.value))
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const spread = Math.max(max - min, 1)
+  const width = 320
+  const height = 140
+  const path = points.map((point, index) => {
+    const x = (index / Math.max(points.length - 1, 1)) * (width - 24) + 12
+    const y = height - 12 - ((Number(point.value) - min) / spread) * (height - 24)
+    return `${index === 0 ? 'M' : 'L'}${x},${y}`
+  }).join(' ')
+  return (
+    <>
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} className="chart-svg">
+        <path d={path} fill="none" stroke="var(--accent-primary)" strokeWidth="3" strokeLinecap="round" />
+      </svg>
+      <div className="detail-line detail-line--muted">最新值 {points[points.length - 1]?.value} {unit}</div>
+    </>
+  )
+}
+
+function SimpleBars({ points }: { points: ProgressSeriesPoint[] }) {
+  if (!points.length) return <div className="empty-row empty-row--sheet">還沒有足夠資料畫出熱量趨勢。</div>
+  const max = Math.max(...points.map((point) => Math.max(Number(point.value), Number(point.target ?? 0), 1)))
+  return (
+    <div className="mini-bars mini-bars--wide">
+      {points.slice(-8).map((point) => (
+        <div key={point.date} className="mini-bars__item">
+          <div className="mini-bars__track mini-bars__track--stacked">
+            {point.target != null ? <div className="mini-bars__target" style={{ height: `${Math.max(8, (Number(point.target) / max) * 100)}%` }} /> : null}
+            <div className="mini-bars__fill" style={{ height: `${Math.max(8, (Number(point.value) / max) * 100)}%` }} />
+          </div>
+          <span>{point.date.slice(5)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function GoalSheet({ isOpen, onClose, bodyGoal, onSaved }: { isOpen: boolean; onClose: () => void; bodyGoal: BodyGoal | null; onSaved: (bodyGoal: BodyGoal) => Promise<void> }) {
+  const { auth } = useApp()
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [form, setForm] = useState({
+    target_weight_kg: bodyGoal?.target_weight_kg ? String(bodyGoal.target_weight_kg) : '',
+    estimated_tdee_kcal: bodyGoal?.estimated_tdee_kcal ? String(bodyGoal.estimated_tdee_kcal) : '',
+    default_daily_deficit_kcal: bodyGoal?.default_daily_deficit_kcal ? String(bodyGoal.default_daily_deficit_kcal) : '',
+  })
+
+  async function save() {
+    if (auth.status !== 'ready') return
+    const data = await api<{ payload: { body_goal: BodyGoal } }>(
+      '/api/body-goal',
+      auth.headers,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          target_weight_kg: form.target_weight_kg ? Number(form.target_weight_kg) : null,
+          estimated_tdee_kcal: showAdvanced && form.estimated_tdee_kcal ? Number(form.estimated_tdee_kcal) : undefined,
+          default_daily_deficit_kcal: showAdvanced && form.default_daily_deficit_kcal ? Number(form.default_daily_deficit_kcal) : undefined,
+        }),
+      },
+    )
+    await onSaved(data.payload.body_goal)
+    onClose()
+  }
+
+  return (
+    <FullScreenSheet isOpen={isOpen} onClose={onClose} title="模型與目標">
+      <div className="sheet-stack">
+        <section className="sheet-card">
+          <div className="sheet-card__header">
+            <h4>主要設定</h4>
+            <span>平常只需要改目標體重</span>
+          </div>
+          <div className="sheet-stack">
+            <input className="input-field" type="number" step="0.1" placeholder="目標體重 kg" value={form.target_weight_kg} onChange={(event) => setForm((current) => ({ ...current, target_weight_kg: event.target.value }))} />
+            <button className="text-link-button text-link-button--left" type="button" onClick={() => setShowAdvanced((current) => !current)}>
+              {showAdvanced ? '隱藏進階設定' : '展開進階設定'}
+            </button>
+            {showAdvanced ? (
+              <div className="sheet-stack">
+                <input className="input-field" type="number" placeholder="估計 TDEE" value={form.estimated_tdee_kcal} onChange={(event) => setForm((current) => ({ ...current, estimated_tdee_kcal: event.target.value }))} />
+                <input className="input-field" type="number" placeholder="每日赤字" value={form.default_daily_deficit_kcal} onChange={(event) => setForm((current) => ({ ...current, default_daily_deficit_kcal: event.target.value }))} />
+              </div>
+            ) : null}
+          </div>
+        </section>
+        <button className="btn btn-primary" type="button" onClick={() => void save()}>儲存設定</button>
+      </div>
+    </FullScreenSheet>
+  )
+}
+
+export default function ProgressPage() {
+  const { auth, bodyGoal, summary, activities, progressSeries, progressRange, selectedDate, refreshActivities, refreshBodyGoal, refreshProgressSeries, refreshSummary, compensation, setCompensation, mealEvents, createMealEvent } = useApp()
+  const [goalOpen, setGoalOpen] = useState(false)
+  const [insightsOpen, setInsightsOpen] = useState(false)
+
+  if (auth.status !== 'ready' || !summary) {
+    return <div className="page-container"><div className="page-skeleton" /></div>
+  }
+
+  const currentSummary = summary
+
+  async function syncSummary(summaryData: Summary) {
+    await Promise.all([refreshSummary(summaryData.date), refreshActivities(summaryData.date), refreshBodyGoal(), refreshProgressSeries()])
+  }
+
+  async function saveWeight(weight: string) {
+    if (auth.status !== 'ready') return
+    await api('/api/weights', auth.headers, { method: 'POST', body: JSON.stringify({ date: selectedDate, weight: Number(weight) }) })
+    await Promise.all([refreshSummary(selectedDate), refreshBodyGoal(), refreshProgressSeries()])
+  }
+
+  async function saveGoal(_: BodyGoal) {
+    await Promise.all([refreshBodyGoal(), refreshSummary(selectedDate), refreshProgressSeries()])
+  }
+
+  async function buildRecovery() {
+    if (auth.status !== 'ready') return
+    const data = await api<{ compensation: Compensation }>(
+      '/api/plans/compensation',
+      auth.headers,
+      { method: 'POST', body: JSON.stringify({ expected_extra_kcal: Math.max(currentSummary.weekly_drift_kcal, 0) }) },
+    )
+    setCompensation(data.compensation)
+  }
+
+  return (
+    <div className="page-container" id="page-progress">
+      <BodyHero summary={currentSummary} bodyGoal={bodyGoal} onLogWeight={saveWeight} />
+
+      <section className="metric-pill-row">
+        <MetricRow label="估計 TDEE" value={`${bodyGoal?.estimated_tdee_kcal ?? currentSummary.base_target_kcal} kcal`} />
+        <MetricRow label="今天多消耗" value={`+${currentSummary.today_activity_burn_kcal} kcal`} />
+        <MetricRow label="今天可吃" value={`${currentSummary.effective_target_kcal} kcal`} hint="已含活動加回" />
+      </section>
+
+      <WeeklyReviewCard summary={currentSummary} series={progressSeries} />
+      <StrategyCard summary={currentSummary} compensation={compensation} onBuildRecovery={buildRecovery} />
+      <ActivitySummary activities={activities} selectedDate={selectedDate} onSaved={syncSummary} />
+      <MealEventPlannerCard mealEvents={mealEvents} onCreate={createMealEvent} />
+      <PlanEventsCard />
+
+      <section className="summary-card">
+        <button className="summary-card__header" type="button" onClick={() => setInsightsOpen(true)}>
+          <div>
+            <strong>趨勢與分析</strong>
+            <span>查看體重、熱量與活動變化</span>
+          </div>
+          <span>開啟</span>
+        </button>
+      </section>
+
+      <section className="summary-card">
+        <button className="summary-card__header" type="button" onClick={() => setGoalOpen(true)}>
+          <div>
+            <strong>模型與目標</strong>
+            <span>調整目標體重與進階能量參數</span>
+          </div>
+          <span>編輯</span>
+        </button>
+      </section>
+
+      <GoalSheet isOpen={goalOpen} onClose={() => setGoalOpen(false)} bodyGoal={bodyGoal} onSaved={saveGoal} />
+      <FullScreenSheet isOpen={insightsOpen} onClose={() => setInsightsOpen(false)} title="趨勢與分析">
+        <ProgressInsights series={progressSeries} range={progressRange} onChangeRange={(range) => void refreshProgressSeries(range)} />
+      </FullScreenSheet>
+    </div>
+  )
+}

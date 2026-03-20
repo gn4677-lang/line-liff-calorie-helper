@@ -2,110 +2,123 @@
 
 Source of truth for frontend and interaction work on the LINE + LIFF calorie helper.
 
+## Reference Docs
+
 - Product baseline: [product-spec-v1.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/product-spec-v1.md)
 - Memory design: [memory-onboarding-v2.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/memory-onboarding-v2.md)
 - Memory schema: [memory-schema-spec.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/memory-schema-spec.md)
+- Conversation / confirmation: [conversation-confirmation-tech-spec.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/conversation-confirmation-tech-spec.md)
+- Knowledge pack: [knowledge-pack-spec.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/knowledge-pack-spec.md)
+- Proactivity / nearby search: [proactivity-tech-spec.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/proactivity-tech-spec.md)
+- Evals / observability: [evals-observability-tech-spec.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/evals-observability-tech-spec.md)
+- Observability admin UI: [observability-admin-ui-contract.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/observability-admin-ui-contract.md)
+- Surface split / chat vs LIFF: [surface-interaction-spec.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/surface-interaction-spec.md)
+- Video intake: [video-intake-tech-spec.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/video-intake-tech-spec.md)
 - Execution checklist: [TODO.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/TODO.md)
-- Architecture: [architecture.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/architecture.md)
 - Current frontend shell: [App.tsx](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/frontend/src/App.tsx)
 - Current backend contracts: [schemas.py](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/backend/app/schemas.py)
 - Production app: [gn4677-calorie-helper.ai-builders.space](https://gn4677-calorie-helper.ai-builders.space/)
 - LIFF URL: [liff.line.me/2009526305-adlzUvHT](https://liff.line.me/2009526305-adlzUvHT)
 
-## What Exists
+## Current State
 
 - Backend is live on Builder Space.
 - Database is live on Supabase Postgres.
 - Attachments are stored in Supabase Storage.
 - LINE webhook is implemented.
 - LIFF auth is implemented with real ID token verification.
-- Cold-start onboarding and memory APIs now exist.
+- Cold-start onboarding, memory APIs, nutrition QA, weekly summary, nearby recommendation APIs, async update jobs, notifications, and video intake APIs now exist.
 - Frontend is still a prototype shell and should be upgraded.
 
-## Frontend Goal
+## Core LIFF Surfaces
 
-Treat the current frontend as a working prototype and replace it with a stronger product-quality LIFF experience.
+Do not collapse these into a single generic dashboard.
 
-The target is not a generic dashboard. It should feel like:
+### 1. 體重熱量
 
-- a daily cockpit for calorie decisions
-- a fast meal logging surface
-- a low-anxiety coach for uncertain food logging
-- a narrow recommendation engine that helps decide what to eat now
-- a light-touch onboarding flow that seeds the system without feeling like setup ceremony
+Purpose:
 
-The product structure must stay:
+- answer `Am I on track this week?`
 
-- `體重熱量`
-- `今日紀錄`
-- `食物推薦`
+Must show:
+
+- latest weight
+- 7-day average
+- 14-day direction
+- daily target
+- weekly drift
+- recovery overlay state when active
+- target-adjustment or recovery hint when relevant
+
+### 2. 今日紀錄
+
+Purpose:
+
+- answer `What did I eat, how much is left, and what should I do next?`
+
+Must show:
+
+- consumed / remaining kcal
+- weekly drift summary
+- meal log list
+- active draft state
+- clarification UI
+- confirmation / correction surfaces
+- answer chips when `answer_mode = chips_first_with_text_fallback`
+- pending async updates
+
+### 3. 食物推薦
+
+Purpose:
+
+- answer `What can I eat right now, and where should I get it?`
+
+Must show:
+
+- grouped recommendations
+- reason factors
+- nearby recommendation launcher
+- saved places and favorite stores
+- golden orders
+- day plan
+- compensation options
+- overlay-aware planning state
+
+## Surface Rules
+
+- `LINE chat` handles capture, short clarification, correction preview, quick nudges, async update decisions, and location branching.
+- `今日紀錄` handles today truth-state, unresolved drafts, same-day async updates, and today recovery overlay.
+- `食物推薦` handles nearby / destination-based choice, recommendation browsing, favorite stores, and golden orders.
+- `體重熱量` handles weekly drift, trends, plan events, and recovery decisions.
+- The same proactive behavior must not be duplicated across all surfaces; follow [surface-interaction-spec.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/surface-interaction-spec.md).
+
+## Internal Admin Surface
+
+- Observability should be rendered as a separate internal admin surface, not merged into the three user-facing pages.
+- Keep error / debug / eval / review queue separated into distinct panels.
+- Include:
+  - summary cards
+  - task health table
+  - quality trend charts
+  - provider / model usage panel
+  - memory digest panel
+  - operational error panel
+  - alert list
+  - review queue panel
 
 ## Non-Negotiable Constraints
 
 - Keep backend contracts stable unless there is a strong reason to change them.
 - Keep LIFF auth flow intact:
-  - frontend bootstraps from `GET /api/client-config`
-  - frontend initializes LIFF SDK
-  - frontend sends `X-Line-Id-Token` to backend
-  - backend verifies ID token and binds the user
+  - load `GET /api/client-config`
+  - initialize LIFF SDK
+  - send `X-Line-Id-Token`
+  - backend verifies and binds the user
 - Do not put secrets in frontend code.
-- Assume this runs inside LIFF first, desktop browser second.
+- Assume LIFF first, desktop browser second.
 - Optimize for mobile-first interaction density.
-- Preserve the 3-page information architecture from the spec.
-- Keep onboarding answers and corrections simple, structured, and easy to revise later.
-
-## Required Screens
-
-### 1. 體重熱量
-
-Purpose:
-- answer “am I on track?”
-
-Must show:
-- latest weight entry
-- 7-day average
-- 14-day direction
-- daily calorie target
-- target adjustment hint
-
-Interaction notes:
-- weight logging should be extremely short
-- single-day fluctuations should not feel alarming
-
-### 2. 今日紀錄
-
-Purpose:
-- answer “what did I eat, how much is left, what should I do next?”
-
-Must show:
-- current day summary
-- consumed kcal
-- remaining kcal
-- meal log list
-- active draft state
-- clarification UI when needed
-- confirm / force confirm actions
-- quick entry for text logging
-
-Interaction notes:
-- this is the main daily cockpit
-- clarification should feel like a compact conversational step, not a form wizard
-- draft should feel temporary and easy to finish
-
-### 3. 食物推薦
-
-Purpose:
-- answer “what can I eat right now?”
-
-Must show:
-- grouped recommendations
-- day plan
-- compensation options
-- optional explainability entry or inline factors
-
-Interaction notes:
-- recommendation groups should be visually distinct
-- privilege a few usable options over a large searchable list
+- Keep onboarding answers and corrections structured and easy to revise.
+- Keep the three-page split explicit; do not merge them into one super-page.
 
 ## Required Flows
 
@@ -114,206 +127,100 @@ Interaction notes:
 1. Open LIFF
 2. Load `GET /api/client-config`
 3. Initialize LIFF
-4. If not logged in, LIFF login redirect
-5. If logged in, fetch `GET /api/me` with `X-Line-Id-Token`
-6. Load onboarding state, summary, recommendations
-
-States needed:
-- booting
-- auth failed
-- authenticated and loading data
-- ready
+4. Authenticate and load `GET /api/me`
+5. Load onboarding state, summary, recommendations, notifications
 
 ### Cold Start Flow
 
-1. Load `GET /api/onboarding-state`
-2. If `should_show = true`, show a 5-question onboarding card
+1. `GET /api/onboarding-state`
+2. If `should_show = true`, show the 5-question onboarding card
 3. Submit to `POST /api/preferences/onboarding`
 4. Or skip via `POST /api/onboarding/skip`
-5. Refresh recommendation and planning surfaces
-
-States needed:
-- unseen
-- answering
-- skipped
-- completed
 
 ### Meal Logging Flow
 
-1. User enters meal text
-2. `POST /api/intake`
-3. If draft is `awaiting_clarification`, show follow-up question inline
-4. `POST /api/intake/{draft_id}/clarify`
-5. When draft is ready, let user confirm
-6. `POST /api/intake/{draft_id}/confirm`
-7. Refresh summary and recommendations
+1. User enters meal text, photo, audio, or video
+2. `POST /api/intake` or `POST /api/intake/video`
+3. If `confirmation_mode = auto_recordable`, show success state immediately
+4. If `needs_clarification`, show one follow-up question and answer chips when present
+5. `POST /api/intake/{draft_id}/clarify`
+6. If needed, `POST /api/intake/{draft_id}/confirm`
 
-### Preference Correction Flow
+### Correction Flow
 
-1. User opens settings or taps a correction surface
-2. Load `GET /api/preferences`
-3. Submit changes to `POST /api/preferences/correction`
-4. Refresh recommendation and planning views
+1. User triggers correction from chat or LIFF
+2. System creates a correction preview
+3. UI shows new kcal, old kcal, and overwrite intent
+4. Confirm to overwrite the previous record
 
-## API Contracts Antigravity Should Assume
+### Nearby Recommendation Flow
 
-### `GET /api/onboarding-state`
+1. User enters recommendation mode
+2. UI asks where to search:
+   - current area
+   - destination
+   - saved place
+   - manual input
+3. `POST /api/location/resolve` or `POST /api/recommendations/nearby`
+4. Show heuristic shortlist immediately
+5. If `search_job_id` exists, poll `GET /api/search-jobs/{job_id}`
+6. Surface improved nearby candidates or async update actions when ready
 
-```json
-{
-  "should_show": true,
-  "completed": false,
-  "skipped": false,
-  "version": "v1",
-  "preferences": {
-    "breakfast_habit": "variable",
-    "carb_need": "flexible",
-    "dinner_style": "normal",
-    "hard_dislikes": [],
-    "compensation_style": "let_system_decide"
-  }
-}
-```
+### Async Update Flow
 
-### `POST /api/preferences/onboarding`
+1. Intake or nearby search creates a `search_job`
+2. UI polls notifications or job status
+3. If a better estimate is found, show:
+   - new kcal
+   - old kcal
+   - reason
+   - sources
+4. Let the user `Apply` or `Dismiss`
 
-```json
-{
-  "breakfast_habit": "rare",
-  "carb_need": "flexible",
-  "dinner_style": "high_protein",
-  "hard_dislikes": ["韓式"],
-  "compensation_style": "gentle_1d"
-}
-```
+## Contract Notes
 
-### `GET /api/preferences`
+- `DraftResponse` now includes:
+  - `confirmation_mode`
+  - `estimation_confidence`
+  - `confirmation_calibration`
+  - `primary_uncertainties`
+  - `clarification_kind`
+  - `answer_mode`
+  - `answer_options`
+- `DaySummaryResponse` now includes:
+  - weekly fields
+  - `recovery_overlay`
+  - `pending_async_updates_count`
+- `PreferenceResponse` now includes:
+  - `communication_profile`
+- Nutrition QA is available through:
+  - `POST /api/qa/nutrition`
+- Proactive APIs now include:
+  - `POST /api/recommendations/nearby`
+  - `POST /api/location/resolve`
+  - `GET /api/notifications`
+  - `POST /api/search-jobs/{job_id}/apply`
+  - `POST /api/search-jobs/{job_id}/dismiss`
+  - `GET /api/saved-places`
+  - `GET /api/favorite-stores`
+- Video intake APIs now include:
+  - `POST /api/intake/video`
+  - async `video_precision` jobs
+  - richer `suggested_update` with OCR / grounding sources
 
-```json
-{
-  "breakfast_habit": "rare",
-  "carb_need": "flexible",
-  "dinner_style": "high_protein",
-  "hard_dislikes": ["韓式"],
-  "compensation_style": "gentle_1d"
-}
-```
+## Frontend Design Priority
 
-### `POST /api/preferences/correction`
+The frontend should make uncertainty feel manageable, not alarming.
 
-Partial update:
+Most important UI upgrades:
 
-```json
-{
-  "breakfast_habit": "regular",
-  "correction_note": "我最近開始吃早餐了"
-}
-```
-
-### `GET /api/recommendations`
-
-Each item now supports:
-
-```json
-{
-  "name": "雞胸便當",
-  "group": "高蛋白優先",
-  "reason": "蛋白質密度較高，通常更適合減脂期的主力選擇。",
-  "reason_factors": [
-    "晚餐你通常比較接受高蛋白選項。",
-    "這個選項的蛋白質密度比較高。"
-  ]
-}
-```
-
-### `POST /api/plans/day`
-
-Response now supports:
-
-```json
-{
-  "plan": {
-    "allocations": {
-      "breakfast": 180,
-      "lunch": 630,
-      "dinner": 720,
-      "flex": 270
-    },
-    "reason_factors": [
-      "你最近早餐通常吃得比較少，所以把熱量額度往午晚餐和彈性空間移。"
-    ]
-  }
-}
-```
-
-### `POST /api/plans/compensation`
-
-Response now supports:
-
-```json
-{
-  "compensation": {
-    "options": [],
-    "reason_factors": [
-      "你偏向不要做激烈補償，所以先以回到正常軌道為主。"
-    ]
-  }
-}
-```
-
-## Suggested Design Direction
-
-Avoid:
-
-- generic admin dashboard look
-- flat white cards everywhere
-- dense tables
-- long forms for meal logging
-- too many recommendation items
-- onboarding that feels like profile setup ceremony
-
-Prefer:
-
-- mobile-first stacked layout
-- strong hierarchy around remaining calories
-- draft card that feels conversational
-- grouped recommendation blocks with distinct visual tone
-- onboarding that feels short, useful, and skippable
-- preference correction surfaces that feel lightweight rather than settings-heavy
-- subtle but intentional motion
-- a visual direction that feels personal and coach-like rather than enterprise
-
-## Safe Refactor Boundaries
-
-Antigravity can safely change:
-
-- component structure
-- state organization in frontend
-- CSS system
-- page layout
-- interaction design
-- loading, error, empty states
-- onboarding UI
-- explainability presentation
-
-Antigravity should not change without coordinating:
-
-- LIFF auth contract
-- backend endpoint names
-- request and response field names
-- webhook assumptions
-- memory source priority rules
-- database schema assumptions
-
-## Acceptance Bar For Frontend Revision
-
-- LIFF opens and authenticates without extra manual steps
-- onboarding is understandable in under 20 seconds and skippable
-- first screen clearly shows remaining calories
-- logging a meal feels possible in under 30 seconds
-- clarification flow feels compact and non-annoying
-- recommendation screen feels actionable, not informational
-- explainability is available but not noisy
-- preference correction is easy to find and easy to trust
-- UI works on common mobile widths inside LINE
-- no secrets are exposed in frontend
+- clearer draft / clarification states
+- better correction preview
+- weekly overlay visibility
+- explainability entry for recommendations
+- structured onboarding and settings surfaces
+- nearby recommendation launcher with place-choice branching
+- async update inbox / notification center
+- saved place and favorite store management
+- video upload and pending-refinement state
+- the exact cross-surface split defined in [surface-interaction-spec.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/surface-interaction-spec.md)

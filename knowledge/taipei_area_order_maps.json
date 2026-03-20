@@ -1,0 +1,111 @@
+[
+  {
+    "name": "Taipei Main / Beimen / Chengzhong",
+    "display_name": "Taipei Main / Beimen / Chengzhong",
+    "aliases": ["taipei main", "台北車站", "北門", "城中"],
+    "area_id": "taipei_main_beimen_chengzhong",
+    "district": "Zhongzheng / Datong",
+    "mrt_tags": ["台北車站", "北門", "西門北側"],
+    "official_area_url": "https://www.tcooc.gov.taipei/cp.aspx?n=54C9D00641BD9D2D",
+    "scene_tags": ["commute", "office_lunch", "rush_meal"],
+    "common_store_categories": ["convenience_store", "breakfast_chain", "subway", "dumpling", "bubble_tea"],
+    "likely_chain_presence": ["familymart", "7-eleven", "subway", "q burger", "comebuy"],
+    "default_search_terms": ["convenience store", "breakfast restaurant", "subway", "dumpling restaurant"],
+    "source_confidence": "medium",
+    "golden_order_archetypes": [
+      {"meal_window": "breakfast", "order_pattern": "egg toast plus black coffee", "estimated_kcal_low": 280, "estimated_kcal_high": 420},
+      {"meal_window": "lunch", "order_pattern": "Subway 6-inch chicken sandwich", "estimated_kcal_low": 300, "estimated_kcal_high": 420},
+      {"meal_window": "rush_meal", "order_pattern": "sweet potato plus chicken breast pack", "estimated_kcal_low": 260, "estimated_kcal_high": 410}
+    ]
+  },
+  {
+    "name": "Ximending",
+    "display_name": "Ximending",
+    "aliases": ["ximending", "西門町", "西門"],
+    "area_id": "ximending",
+    "district": "Wanhua",
+    "mrt_tags": ["西門"],
+    "official_area_url": "https://www.tcooc.gov.taipei/cp.aspx?n=54C9D00641BD9D2D",
+    "scene_tags": ["shopping", "snack_stack_risk", "late_night"],
+    "common_store_categories": ["bubble_tea", "fried_snack", "convenience_store", "fast_food"],
+    "likely_chain_presence": ["kebuke", "comebuy", "familymart", "kfc"],
+    "default_search_terms": ["bubble tea store", "convenience store", "subway", "dumpling restaurant"],
+    "source_confidence": "medium",
+    "golden_order_archetypes": [
+      {"meal_window": "snack", "order_pattern": "single meal plus no-sugar tea", "estimated_kcal_low": 320, "estimated_kcal_high": 520},
+      {"meal_window": "late_night", "order_pattern": "dumplings or soup instead of fried sharing food", "estimated_kcal_low": 300, "estimated_kcal_high": 520}
+    ]
+  },
+  {
+    "name": "Gongguan / NTU",
+    "display_name": "Gongguan / NTU",
+    "aliases": ["gongguan", "公館", "ntu", "台大"],
+    "area_id": "gongguan_ntu",
+    "district": "Zhongzheng / Da'an",
+    "mrt_tags": ["公館"],
+    "official_area_url": "https://www.tcooc.gov.taipei/cp.aspx?n=54C9D00641BD9D2D",
+    "scene_tags": ["campus", "value_meal", "student_meal"],
+    "common_store_categories": ["breakfast_chain", "convenience_store", "drink_chain", "dumpling", "subway"],
+    "likely_chain_presence": ["subway", "familymart", "milksha", "q burger", "eightway"],
+    "default_search_terms": ["subway", "breakfast restaurant", "bubble tea store", "dumpling restaurant"],
+    "source_confidence": "medium",
+    "golden_order_archetypes": [
+      {"meal_window": "lunch", "order_pattern": "dumplings plus soup", "estimated_kcal_low": 330, "estimated_kcal_high": 520},
+      {"meal_window": "dinner", "order_pattern": "Subway sandwich with lots of vegetables", "estimated_kcal_low": 300, "estimated_kcal_high": 420}
+    ]
+  },
+  {
+    "name": "Nanjing Fuxing / Zhongshan Guozhong",
+    "display_name": "Nanjing Fuxing / Zhongshan Guozhong",
+    "aliases": ["nanjing fuxing", "南京復興", "中山國中"],
+    "area_id": "nanjing_fuxing_zhongshan_guozhong",
+    "district": "Songshan / Zhongshan",
+    "mrt_tags": ["南京復興", "中山國中"],
+    "official_area_url": "https://www.tcooc.gov.taipei/cp.aspx?n=54C9D00641BD9D2D",
+    "scene_tags": ["office_lunch", "commute", "business_meal"],
+    "common_store_categories": ["breakfast_chain", "convenience_store", "subway", "bubble_tea"],
+    "likely_chain_presence": ["familymart", "subway", "comebuy", "q burger"],
+    "default_search_terms": ["breakfast restaurant", "subway", "convenience store"],
+    "source_confidence": "medium",
+    "golden_order_archetypes": [
+      {"meal_window": "breakfast", "order_pattern": "egg wrap plus unsweetened tea", "estimated_kcal_low": 280, "estimated_kcal_high": 430},
+      {"meal_window": "lunch", "order_pattern": "convenience protein plus sweet potato", "estimated_kcal_low": 250, "estimated_kcal_high": 420}
+    ]
+  },
+  {
+    "name": "Zhongshan / Nanjing West / Chifeng",
+    "display_name": "Zhongshan / Nanjing West / Chifeng",
+    "aliases": ["zhongshan", "中山", "南京西路", "赤峰街"],
+    "area_id": "zhongshan_nanjing_west_chifeng",
+    "district": "Zhongshan / Datong",
+    "mrt_tags": ["中山", "雙連"],
+    "official_area_url": "https://www.tcooc.gov.taipei/cp.aspx?n=54C9D00641BD9D2D",
+    "scene_tags": ["shopping", "coffee", "dessert_stack_risk"],
+    "common_store_categories": ["coffee", "dessert", "bubble_tea", "convenience_store", "breakfast_chain"],
+    "likely_chain_presence": ["familymart", "kebuke", "milksha", "subway"],
+    "default_search_terms": ["convenience store", "coffee shop", "subway", "breakfast restaurant"],
+    "source_confidence": "medium",
+    "golden_order_archetypes": [
+      {"meal_window": "afternoon", "order_pattern": "single drink with no dessert stacking", "estimated_kcal_low": 0, "estimated_kcal_high": 180},
+      {"meal_window": "meal", "order_pattern": "sandwich or salad before dessert lane", "estimated_kcal_low": 280, "estimated_kcal_high": 480}
+    ]
+  },
+  {
+    "name": "Xinyi Planning District / City Hall / Yongchun",
+    "display_name": "Xinyi Planning District / City Hall / Yongchun",
+    "aliases": ["xinyi", "信義區", "市政府", "永春"],
+    "area_id": "xinyi_city_hall_yongchun",
+    "district": "Xinyi",
+    "mrt_tags": ["市政府", "永春", "象山北側"],
+    "official_area_url": "https://www.tcooc.gov.taipei/cp.aspx?n=54C9D00641BD9D2D",
+    "scene_tags": ["office_lunch", "shopping", "late_dinner"],
+    "common_store_categories": ["convenience_store", "subway", "fast_food", "bubble_tea", "social_dining"],
+    "likely_chain_presence": ["subway", "kfc", "familymart", "comebuy", "milksha"],
+    "default_search_terms": ["subway", "convenience store", "breakfast restaurant", "dumpling restaurant"],
+    "source_confidence": "medium",
+    "golden_order_archetypes": [
+      {"meal_window": "workday_lunch", "order_pattern": "Subway chicken sandwich or salad", "estimated_kcal_low": 300, "estimated_kcal_high": 430},
+      {"meal_window": "late_meal", "order_pattern": "soup, dumplings, or convenience protein over fried sharing food", "estimated_kcal_low": 280, "estimated_kcal_high": 520}
+    ]
+  }
+]

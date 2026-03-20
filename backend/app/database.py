@@ -18,10 +18,20 @@ engine = create_engine(
     future=True,
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+_session_factory_override = None
+
+
+def get_session_factory():
+    return _session_factory_override or SessionLocal
+
+
+def set_session_factory_override(factory) -> None:
+    global _session_factory_override
+    _session_factory_override = factory
 
 
 def get_db() -> Generator:
-    db = SessionLocal()
+    db = get_session_factory()()
     try:
         yield db
     finally:

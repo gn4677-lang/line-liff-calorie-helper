@@ -110,20 +110,20 @@ def _group_for_food(name: str, convenience: int, comfort: int) -> str:
 
 def _reason_for_group(group: str) -> str:
     mapping = {
-        "最穩": "熱量和可得性都比較穩，適合拿來當保守選項。",
-        "最方便": "取得成本低，現在就能執行，不太需要額外準備。",
-        "想吃爽一點": "保留一點滿足感，但還在今天可接受的範圍內。",
-        "高蛋白優先": "蛋白質密度較高，通常更適合減脂期的主力選擇。",
-        "聚餐前適合": "先留一些熱量空間，之後比較不容易失控。",
-        "爆卡後適合": "這類選項回收力道比較溫和，不容易造成補償壓力。",
+        "最穩": "熱量可控、可得性高，保守首選。",
+        "最方便": "取得門檻低，現在就能執行。",
+        "想吃爽一點": "適度滿足感，仍在預算範圍內。",
+        "高蛋白優先": "蛋白質密度高，減脂期主力之選。",
+        "聚餐前適合": "保留熱量空間，預防失控。",
+        "爆卡後適合": "回收力道溫和，無補償壓力。",
     }
-    return mapping.get(group, "這個選項和你今天的剩餘熱量與可得性相對匹配。")
+    return mapping.get(group, "與今日剩餘熱量匹配。")
 
 
 def _reason_factors_for_food(db: Session, user: User, food_name: str, meal_type: str | None) -> list[str]:
     factors = build_explainability_factors(db, user, meal_type=meal_type)
     if any(token in food_name for token in ["雞胸", "高蛋白", "沙拉雞"]):
-        factors.append("這個選項的蛋白質密度比較高。")
+        factors.append("蛋白質比例高。")
     if any(token in food_name for token in ["超商", "便利商店", "7-11", "全家"]):
-        factors.append("這類選項通常取得很快，執行門檻低。")
+        factors.append("快速取得，執行容易。")
     return factors[:4]

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
-import os
 
 import requests
 from PIL import Image, ImageDraw, ImageFont
@@ -24,13 +23,13 @@ def load_env() -> dict[str, str]:
     return values
 
 
-def load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    font_candidates = [
-        "C:/Windows/Fonts/msjh.ttc",
-        "C:/Windows/Fonts/segoeuib.ttf",
-        "C:/Windows/Fonts/arialbd.ttf",
+def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    candidates = [
+        "C:/Windows/Fonts/msjhbd.ttc" if bold else "C:/Windows/Fonts/msjh.ttc",
+        "C:/Windows/Fonts/segoeuib.ttf" if bold else "C:/Windows/Fonts/segoeui.ttf",
+        "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
     ]
-    for candidate in font_candidates:
+    for candidate in candidates:
         path = Path(candidate)
         if path.exists():
             return ImageFont.truetype(str(path), size=size)
@@ -38,36 +37,66 @@ def load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
 
 
 def create_image(output_path: Path) -> None:
-    width, height = 2500, 1686
-    image = Image.new("RGB", (width, height), "#0f1412")
+    width, height = 2500, 843
+    bg_color = "#F5F5F0"
+    card_color = "#FFFFFF"
+    accent = "#10B981"
+    text_primary = "#1A1A1A"
+    text_muted = "#6B7280"
+    divider = "#E0E0DB"
+
+    image = Image.new("RGB", (width, height), bg_color)
     draw = ImageDraw.Draw(image)
 
+    title_font = load_font(72, bold=True)
+    subtitle_font = load_font(36)
+    label_font = load_font(28)
+
     sections = [
-        ("今日紀錄", "記錄、補問、確認今日熱量", "#d0f1de"),
-        ("體重熱量", "看趨勢、目標與剩餘熱量", "#f7edc7"),
-        ("食物推薦", "現在可以吃什麼", "#f6d5c4"),
+        ("今日日誌", "直接看今天吃了什麼、差多少、還有哪些待處理。"),
+        ("吃什麼", "先給你一個主推，再留少量備選讓你快速決定。"),
+        ("身體策略", "看體重、TDEE、活動與本週方向。"),
     ]
 
-    title_font = load_font(124)
-    body_font = load_font(48)
-    eyebrow_font = load_font(38)
-
     panel_width = width // 3
-    colors = ["#153325", "#2b3b17", "#3a2418"]
+    card_margin_x = 40
+    card_margin_y = 40
+    card_radius = 32
 
-    for index, (title, subtitle, accent) in enumerate(sections):
+    for index, (title, subtitle) in enumerate(sections):
         x0 = index * panel_width
-        x1 = width if index == 2 else (index + 1) * panel_width
-        draw.rectangle((x0, 0, x1, height), fill=colors[index])
+        cx0 = x0 + card_margin_x
+        cy0 = card_margin_y
+        cx1 = x0 + panel_width - card_margin_x
+        cy1 = height - card_margin_y
 
-        draw.rounded_rectangle((x0 + 70, 70, x1 - 70, height - 70), radius=48, outline=accent, width=5)
-        draw.text((x0 + 120, 160), "AI FAT LOSS OS", font=eyebrow_font, fill=accent)
-        draw.text((x0 + 120, 380), title, font=title_font, fill="white")
-        draw.text((x0 + 120, 560), subtitle, font=body_font, fill="#d6d6d6")
+        shadow_offset = 4
+        draw.rounded_rectangle(
+            (cx0 + shadow_offset, cy0 + shadow_offset, cx1 + shadow_offset, cy1 + shadow_offset),
+            radius=card_radius,
+            fill="#E8E8E3",
+        )
+        draw.rounded_rectangle((cx0, cy0, cx1, cy1), radius=card_radius, fill=card_color)
+        draw.rectangle((cx0 + 80, cy0 + 24, cx1 - 80, cy0 + 32), fill=accent)
 
-        circle_y = 1240
-        draw.ellipse((x0 + 120, circle_y, x0 + 280, circle_y + 160), fill=accent)
-        draw.text((x0 + 360, circle_y + 28), "Open", font=body_font, fill="white")
+        title_y = cy0 + 100
+        draw.text((cx0 + 80, title_y), title, font=title_font, fill=text_primary)
+        subtitle_y = title_y + 110
+        draw.text((cx0 + 80, subtitle_y), subtitle, font=subtitle_font, fill=text_muted)
+
+        btn_w = 200
+        btn_h = 64
+        btn_x = cx0 + (cx1 - cx0 - btn_w) // 2
+        btn_y = cy1 - 120
+        draw.rounded_rectangle((btn_x, btn_y, btn_x + btn_w, btn_y + btn_h), radius=btn_h // 2, fill=accent)
+        bbox = draw.textbbox((0, 0), "打開", font=label_font)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+        draw.text((btn_x + (btn_w - tw) // 2, btn_y + (btn_h - th) // 2 - 2), "打開", font=label_font, fill="#FFFFFF")
+
+    for i in range(1, 3):
+        x = i * panel_width
+        draw.line((x, card_margin_y + 60, x, height - card_margin_y - 60), fill=divider, width=2)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path, format="PNG")
@@ -75,22 +104,22 @@ def create_image(output_path: Path) -> None:
 
 def create_rich_menu(access_token: str, liff_id: str) -> str:
     rich_menu = {
-        "size": {"width": 2500, "height": 1686},
+        "size": {"width": 2500, "height": 843},
         "selected": True,
-        "name": "fat_loss_os_main",
+        "name": "fat_loss_os_light_v3",
         "chatBarText": "Fat Loss OS",
         "areas": [
             {
-                "bounds": {"x": 0, "y": 0, "width": 833, "height": 1686},
-                "action": {"type": "uri", "label": "今日紀錄", "uri": f"https://liff.line.me/{liff_id}?tab=today"},
+                "bounds": {"x": 0, "y": 0, "width": 833, "height": 843},
+                "action": {"type": "uri", "label": "今日日誌", "uri": f"https://liff.line.me/{liff_id}?tab=today"},
             },
             {
-                "bounds": {"x": 833, "y": 0, "width": 834, "height": 1686},
-                "action": {"type": "uri", "label": "體重熱量", "uri": f"https://liff.line.me/{liff_id}?tab=progress"},
+                "bounds": {"x": 833, "y": 0, "width": 834, "height": 843},
+                "action": {"type": "uri", "label": "吃什麼", "uri": f"https://liff.line.me/{liff_id}?tab=eat"},
             },
             {
-                "bounds": {"x": 1667, "y": 0, "width": 833, "height": 1686},
-                "action": {"type": "uri", "label": "食物推薦", "uri": f"https://liff.line.me/{liff_id}?tab=eat"},
+                "bounds": {"x": 1667, "y": 0, "width": 833, "height": 843},
+                "action": {"type": "uri", "label": "身體策略", "uri": f"https://liff.line.me/{liff_id}?tab=progress"},
             },
         ],
     }
@@ -140,8 +169,8 @@ def main() -> None:
                 "rich_menu_id": rich_menu_id,
                 "image_path": str(OUTPUT_PATH),
                 "today_url": f"https://liff.line.me/{liff_id}?tab=today",
-                "progress_url": f"https://liff.line.me/{liff_id}?tab=progress",
                 "eat_url": f"https://liff.line.me/{liff_id}?tab=eat",
+                "progress_url": f"https://liff.line.me/{liff_id}?tab=progress",
             },
             ensure_ascii=False,
             indent=2,

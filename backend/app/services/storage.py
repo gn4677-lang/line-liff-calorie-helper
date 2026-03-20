@@ -2,23 +2,48 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from functools import lru_cache
+import httpx
 import mimetypes
+from pathlib import Path
 import uuid
 
 from supabase import Client, create_client
+from supabase.lib.client_options import SyncClientOptions
 
 from ..config import ATTACHMENT_DIR, settings
 
 
-VOLATILE_ATTACHMENT_FIELDS = {"content_base64", "signed_url", "local_path"}
+VOLATILE_ATTACHMENT_FIELDS = {"content_base64", "signed_url"}
 _bucket_initialized = False
+_SUPABASE_POSTGREST_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
+_SUPABASE_STORAGE_TIMEOUT = 20
+_SUPABASE_FUNCTION_TIMEOUT = 5
+
+
+@lru_cache(maxsize=1)
+def _get_supabase_httpx_client() -> httpx.Client:
+    return httpx.Client(timeout=_SUPABASE_POSTGREST_TIMEOUT, follow_redirects=True)
+
+
+@lru_cache(maxsize=1)
+def _get_supabase_client_options() -> SyncClientOptions:
+    return SyncClientOptions(
+        postgrest_client_timeout=_SUPABASE_POSTGREST_TIMEOUT,
+        storage_client_timeout=_SUPABASE_STORAGE_TIMEOUT,
+        function_client_timeout=_SUPABASE_FUNCTION_TIMEOUT,
+        httpx_client=_get_supabase_httpx_client(),
+    )
 
 
 @lru_cache(maxsize=1)
 def get_supabase_client() -> Client:
     if not settings.supabase_url or not settings.supabase_service_role_key:
         raise RuntimeError("Supabase Storage is not configured")
-    return create_client(settings.supabase_url, settings.supabase_service_role_key)
+    return create_client(
+        settings.supabase_url,
+        settings.supabase_service_role_key,
+        options=_get_supabase_client_options(),
+    )
 
 
 def ensure_storage_bucket() -> None:
@@ -65,6 +90,34 @@ def store_attachment_bytes(
 
 def attachment_for_persistence(attachment: dict) -> dict:
     return {key: value for key, value in attachment.items() if key not in VOLATILE_ATTACHMENT_FIELDS}
+
+
+def infer_source_type_from_mime(mime_type: str | None) -> str:
+    normalized = (mime_type or "").lower()
+    if normalized.startswith("image/"):
+        return "image"
+    if normalized.startswith("audio/"):
+        return "audio"
+    if normalized.startswith("video/"):
+        return "video"
+    return "file"
+
+
+def load_attachment_bytes(attachment: dict) -> bytes:
+    provider = attachment.get("storage_provider")
+    if provider == "local":
+        local_path = attachment.get("local_path")
+        if not local_path:
+            raise FileNotFoundError("Attachment local_path is missing")
+        return Path(local_path).read_bytes()
+    if provider == "supabase":
+        bucket = attachment.get("storage_bucket") or settings.supabase_storage_bucket
+        path = attachment.get("storage_path")
+        if not bucket or not path:
+            raise FileNotFoundError("Attachment storage reference is incomplete")
+        client = get_supabase_client()
+        return client.storage.from_(bucket).download(path)
+    raise FileNotFoundError(f"Unsupported attachment provider: {provider}")
 
 
 def _store_attachment_in_supabase(

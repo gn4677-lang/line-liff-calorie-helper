@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -28,9 +29,30 @@ class Settings(BaseSettings):
     ai_provider: str = "heuristic"
     ai_builder_base_url: str = "https://space.ai-builders.com/backend/v1"
     ai_builder_token: Optional[str] = None
+    builderspace_router_model: str = "deepseek"
+    builderspace_main_model: str = "supermind-agent-v1"
+    builderspace_frontier_model: str = "gpt-5"
     builderspace_chat_model: str = "supermind-agent-v1"
     builderspace_vision_model: str = "supermind-agent-v1"
     builderspace_transcription_lang: str = "zh-TW"
+    builderspace_ocr_max_tokens: int = 220
+    builderspace_text_max_tokens: int = 320
+    builderspace_vision_max_tokens: int = 480
+    builderspace_hybrid_text_shortcut: bool = True
+    builderspace_result_cache_ttl_seconds: int = 600
+    builderspace_result_cache_max_entries: int = 256
+
+    google_places_api_key: Optional[str] = None
+    google_places_base_url: str = "https://maps.googleapis.com/maps/api/place"
+    background_poll_interval_seconds: int = 10
+    background_job_batch_size: int = 4
+    app_timezone: str = "Asia/Taipei"
+    proactive_push_enabled: bool = True
+    daily_nudge_enabled: bool = True
+    daily_nudge_hour: int = 20
+    event_reminder_hour: int = 11
+    observability_admin_passcode: Optional[str] = None
+    observability_admin_session_ttl_hours: int = 12
 
     default_daily_calorie_target: int = 1800
     default_user_id: str = "demo-user"
@@ -55,3 +77,10 @@ def resolved_database_url() -> str:
     if settings.database_url:
         return settings.database_url
     return f"sqlite:///{DEFAULT_DB.as_posix()}"
+
+
+def resolved_timezone() -> ZoneInfo:
+    try:
+        return ZoneInfo(settings.app_timezone)
+    except Exception:
+        return ZoneInfo("UTC")

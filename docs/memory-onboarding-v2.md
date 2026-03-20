@@ -2,6 +2,12 @@
 
 This document is the implementation-facing report for the memory architecture, onboarding flow, correction flow, retrieval strategy, and explainability model.
 
+Companion implementation specs:
+
+- [conversation-confirmation-tech-spec.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/conversation-confirmation-tech-spec.md)
+- [knowledge-pack-spec.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/knowledge-pack-spec.md)
+- [proactivity-tech-spec.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/proactivity-tech-spec.md)
+
 ## Goal
 
 The system should not try to sound profound. It should try to:

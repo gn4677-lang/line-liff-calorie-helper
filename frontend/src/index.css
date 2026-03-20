@@ -1,27 +1,125 @@
+/* ── AI Fat Loss OS — Design System (Minimalist Light) ── */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;600;700&display=swap');
+
 :root {
-  color: #2b2118;
-  background:
-    radial-gradient(circle at top left, rgba(255, 214, 180, 0.55), transparent 32%),
-    linear-gradient(135deg, #fdf3e6, #f5eadc 45%, #efe6dc);
-  font-family: "Segoe UI", "Noto Sans TC", sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+  /* ── Color Tokens (Apple HIG Light) ── */
+  --bg-primary: #F2F2F7; /* System Grouped Background */
+  --bg-card: #FFFFFF;    /* System Background */
+  --bg-card-soft: #F2F2F7;
+
+  --accent-primary: #34C759; /* Apple Green */
+  --accent-warm: #FF9500;    /* Apple Orange */
+  --accent-soft: #E5F9EA;
+  --accent-dark: #248A3D;
+  
+  --text-primary: #000000;   /* Label */
+  --text-secondary: #3C3C4399; /* Secondary Label */
+  --text-muted: #3C3C434D;     /* Tertiary Label */
+  
+  --success: #34C759;
+  --success-soft: #E5F9EA;
+  --warning: #FFCC00;
+  --warning-soft: #FFFBE6;
+  --danger: #FF3B30;
+  --danger-soft: #FFEBEB;
+  --info: #007AFF;           /* Apple Blue */
+  --info-soft: #E5F0FF;
+
+  --border-subtle: rgba(60, 60, 67, 0.29); /* Separator */
+  --border-focus: #34C759;
+
+  /* ── Typography ── */
+  --font-main: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+  --text-hero: 2.5rem;
+  --text-title: 1.5rem;
+  --text-heading: 1.125rem;
+  --text-body: 1rem;
+  --text-caption: 0.875rem;
+  --text-micro: 0.75rem;
+
+  /* ── Spacing (Touch-friendly) ── */
+  --sp-xs: 4px;
+  --sp-sm: 8px;
+  --sp-md: 16px;
+  --sp-lg: 24px;
+  --sp-xl: 32px;
+  --sp-2xl: 48px;
+
+  /* ── Radius ── */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-pill: 999px;
+
+  /* ── Shadows (Very subtle for depth only) ── */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  --shadow-inner: inset 0 2px 4px 0 rgba(0, 0, 0, 0.02);
+
+  /* ── Transitions ── */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── Glassmorphism (Apple Native Navbars/Sheets) ── */
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-border: none;
+  --glass-blur: blur(40px) saturate(200%);
+  --glass-shadow: 0 8px 32px rgba(0,0,0,0.06);
 }
 
-* {
+/* ── Reset & Base ── */
+*,
+*::before,
+*::after {
   box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
+  font-family: var(--font-main);
+  background-color: var(--bg-primary);
+  background-image: none;
+  color: var(--text-primary);
+  line-height: 1.5;
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 #root {
-  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
 }
 
-a {
-  color: inherit;
+/* Utils */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.text-gradient {
+  background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }

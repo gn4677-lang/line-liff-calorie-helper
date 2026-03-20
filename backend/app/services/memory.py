@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from ..models import MealDraft, MealLog, MemoryHypothesis, MemorySignal, Preference, ReportingBias, User, utcnow
+from ..models import Food, MealDraft, MealLog, MemoryHypothesis, MemorySignal, Preference, RecommendationProfile, ReportingBias, User, utcnow
 from ..schemas import (
     MemoryHypothesisResponse,
     MemoryProfileResponse,
@@ -25,6 +25,14 @@ SOURCE_PRIORITY = {
     "behavior_inferred": 1,
     "user_stated": 2,
     "user_corrected": 3,
+}
+
+DEFAULT_COMMUNICATION_PROFILE = {
+    "directness": "concise_coach",
+    "detail_level": "compact",
+    "confirmation_style": "auto_record_high_confidence",
+    "planning_proactivity": "ask_first",
+    "comparison_answer_style": "chips_first_with_text_fallback",
 }
 
 DISLIKE_LABELS = {
@@ -67,6 +75,15 @@ CANONICAL_ALIASES = {
     },
 }
 
+MEAL_PATTERN_TAG_HINTS = {
+    "high_protein": ("雞", "雞胸", "蛋", "豆腐", "牛肉", "魚", "鮭魚", "subway", "沙拉"),
+    "soup": ("湯", "味噌", "清燉", "鍋", "拉麵", "麵線"),
+    "light": ("沙拉", "輕食", "清蒸", "優格", "水果", "地瓜"),
+    "comfort": ("炸", "披薩", "火鍋", "燒肉", "拉麵", "咖哩", "雞排"),
+    "filling": ("飯", "麵", "便當", "丼", "漢堡", "鍋", "飯糰"),
+    "rice_or_noodle": ("飯", "麵", "便當", "丼", "粥", "冬粉", "米粉", "飯糰"),
+}
+
 
 def get_or_create_preferences(db: Session, user: User) -> Preference:
     preference = db.scalar(select(Preference).where(Preference.user_id == user.id))
@@ -90,6 +107,7 @@ def preference_to_response(preference: Preference) -> PreferenceResponse:
         dinner_style=preference.dinner_style,
         compensation_style=preference.compensation_style,
         notes=preference.notes or "",
+        communication_profile={**DEFAULT_COMMUNICATION_PROFILE, **(preference.communication_profile or {})},
     )
 
 
@@ -274,6 +292,7 @@ def build_intake_memory_packet(db: Session, user: User, draft: MealDraft | None 
             "carb_need": preference.carb_need,
             "dinner_style": preference.dinner_style,
             "hard_dislikes": preference.hard_dislikes,
+            "communication_profile": {**DEFAULT_COMMUNICATION_PROFILE, **(preference.communication_profile or {})},
         },
         "relevant_signals": [_signal_to_packet(item) for item in signals],
         "recent_evidence": [
@@ -295,6 +314,7 @@ def build_recommendation_memory_packet(
     remaining_kcal: int | None,
 ) -> dict[str, Any]:
     preference = get_or_create_preferences(db, user)
+    bias = db.scalar(select(ReportingBias).where(ReportingBias.user_id == user.id))
     hypotheses = list(
         db.scalars(
             select(MemoryHypothesis)
@@ -311,13 +331,46 @@ def build_recommendation_memory_packet(
             .limit(8)
         )
     )
+    recent_logs = list(
+        db.scalars(
+            select(MealLog)
+            .where(MealLog.user_id == user.id)
+            .order_by(desc(MealLog.event_at), desc(MealLog.created_at))
+            .limit(12)
+        )
+    )
+    profile = db.scalar(select(RecommendationProfile).where(RecommendationProfile.user_id == user.id))
 
     return {
         "meal_type": meal_type,
         "remaining_kcal": remaining_kcal,
         "preferences": preference_to_response(preference).model_dump(),
+        "communication_profile": {**DEFAULT_COMMUNICATION_PROFILE, **(preference.communication_profile or {})},
         "active_hypotheses": [_hypothesis_to_packet(item) for item in hypotheses],
         "relevant_signals": [_signal_to_packet(item) for item in signals],
+        "recent_acceptance": [
+            {
+                "meal_type": log.meal_type,
+                "description": log.description_raw,
+                "kcal_estimate": log.kcal_estimate,
+                "store_name": (log.memory_metadata or {}).get("store_name"),
+                "location_context": (log.memory_metadata or {}).get("location_context"),
+                "event_at": log.event_at.isoformat() if log.event_at else None,
+            }
+            for log in recent_logs
+        ],
+        "meal_acceptance_pattern": _build_meal_acceptance_pattern(recent_logs),
+        "store_context_memory": _build_store_context_memory(db, user),
+        "reporting_bias": {
+            "underreport_score": round(bias.underreport_score if bias else 0.0, 3),
+            "log_confidence_score": round(bias.log_confidence_score if bias else 1.0, 3),
+        },
+        "recommendation_profile": {
+            "repeat_tolerance": round(profile.repeat_tolerance, 3) if profile else 0.5,
+            "nearby_exploration_preference": round(profile.nearby_exploration_preference, 3) if profile else 0.35,
+            "favorite_bias_strength": round(profile.favorite_bias_strength, 3) if profile else 0.6,
+            "distance_sensitivity": round(profile.distance_sensitivity, 3) if profile else 0.55,
+        },
     }
 
 
@@ -343,6 +396,7 @@ def build_planning_memory_packet(db: Session, user: User) -> dict[str, Any]:
 
     return {
         "preferences": preference_to_response(preference).model_dump(),
+        "communication_profile": {**DEFAULT_COMMUNICATION_PROFILE, **(preference.communication_profile or {})},
         "recent_log_count": len(logs),
         "recent_average_kcal": round(total_kcal / len(logs)) if logs else None,
         "active_hypotheses": [_hypothesis_to_packet(item) for item in hypotheses],
@@ -841,3 +895,97 @@ def _hypothesis_to_response(hypothesis: MemoryHypothesis) -> MemoryHypothesisRes
         status=hypothesis.status,
         supporting_signal_ids=hypothesis.supporting_signal_ids or [],
     )
+
+
+def _build_meal_acceptance_pattern(recent_logs: list[MealLog]) -> dict[str, Any]:
+    pattern: dict[str, dict[str, Any]] = {}
+    for log in recent_logs:
+        day_key = log.event_at.date().weekday() if log.event_at else log.date.weekday()
+        bucket = pattern.setdefault(
+            log.meal_type,
+            {
+                "count": 0,
+                "weekday_hits": 0,
+                "weekend_hits": 0,
+                "tag_counts": {},
+                "weekday_tag_counts": {},
+                "weekend_tag_counts": {},
+            },
+        )
+        bucket["count"] += 1
+        if day_key < 5:
+            bucket["weekday_hits"] += 1
+        else:
+            bucket["weekend_hits"] += 1
+        for tag in _extract_meal_pattern_tags(log):
+            tag_counts = dict(bucket.get("tag_counts", {}))
+            tag_counts[tag] = int(tag_counts.get(tag, 0)) + 1
+            bucket["tag_counts"] = tag_counts
+            segment_key = "weekday_tag_counts" if day_key < 5 else "weekend_tag_counts"
+            segment_counts = dict(bucket.get(segment_key, {}))
+            segment_counts[tag] = int(segment_counts.get(tag, 0)) + 1
+            bucket[segment_key] = segment_counts
+
+    normalized: dict[str, Any] = {}
+    for meal_type, bucket in pattern.items():
+        count = int(bucket.get("count", 0))
+        normalized[meal_type] = {
+            "count": count,
+            "weekday_hits": int(bucket.get("weekday_hits", 0)),
+            "weekend_hits": int(bucket.get("weekend_hits", 0)),
+            "weekday_ratio": round((int(bucket.get("weekday_hits", 0)) / count), 3) if count else 0.0,
+            "dominant_tags": _top_tags(bucket.get("tag_counts", {}), threshold=2 if count >= 5 else 1),
+            "weekday_dominant_tags": _top_tags(bucket.get("weekday_tag_counts", {}), threshold=1),
+            "weekend_dominant_tags": _top_tags(bucket.get("weekend_tag_counts", {}), threshold=1),
+        }
+    return normalized
+
+
+def _build_store_context_memory(db: Session, user: User) -> list[dict[str, Any]]:
+    foods = list(
+        db.scalars(
+            select(Food)
+            .where(Food.user_id == user.id)
+            .where(Food.store_context.is_not(None))
+            .order_by(desc(Food.usage_count), desc(Food.last_used_at))
+            .limit(6)
+        )
+    )
+    memory: list[dict[str, Any]] = []
+    for food in foods:
+        store_context = food.store_context or {}
+        top_store_name = store_context.get("top_store_name")
+        if not top_store_name:
+            continue
+        memory.append(
+            {
+                "food_name": food.name,
+                "top_store_name": top_store_name,
+                "top_place_id": store_context.get("top_place_id"),
+                "usage_count": food.usage_count,
+                "top_avg_kcal": store_context.get("top_avg_kcal"),
+                "top_portion_ratio": store_context.get("top_portion_ratio"),
+                "distinct_store_count": store_context.get("distinct_store_count", 1),
+                "top_location_context": store_context.get("top_location_context", ""),
+            }
+        )
+    return memory
+
+
+def _extract_meal_pattern_tags(log: MealLog) -> set[str]:
+    text = " ".join(
+        [
+            log.description_raw or "",
+            *[str(item.get("name", "")) for item in (log.parsed_items or []) if isinstance(item, dict)],
+        ]
+    ).lower()
+    return {
+        tag
+        for tag, hints in MEAL_PATTERN_TAG_HINTS.items()
+        if any(hint.lower() in text for hint in hints)
+    }
+
+
+def _top_tags(counts: dict[str, int], *, threshold: int) -> list[str]:
+    ordered = sorted(((tag, int(count)) for tag, count in counts.items() if int(count) >= threshold), key=lambda item: (-item[1], item[0]))
+    return [tag for tag, _count in ordered[:3]]

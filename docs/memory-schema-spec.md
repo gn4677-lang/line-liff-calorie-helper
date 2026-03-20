@@ -2,6 +2,12 @@
 
 Engineering reference for the L1/L2/L3 memory system, cold-start onboarding, correction flow, and retrieval packets.
 
+Related implementation specs:
+
+- [conversation-confirmation-tech-spec.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/conversation-confirmation-tech-spec.md)
+- [knowledge-pack-spec.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/knowledge-pack-spec.md)
+- [proactivity-tech-spec.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/proactivity-tech-spec.md)
+
 This document is more concrete than [memory-onboarding-v2.md](C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/memory-onboarding-v2.md). Use it when changing database fields, writing consolidation jobs, or extending memory-aware prompts.
 
 ## Design Goals

@@ -1,0 +1,98 @@
+[
+  {
+    "label": "半碗白飯",
+    "category": "rice",
+    "rough_kcal": 140,
+    "notes": "適合當作便當少飯、飯剩一半的比較基準。"
+  },
+  {
+    "label": "一碗白飯",
+    "category": "rice",
+    "rough_kcal": 280,
+    "notes": "一般家用飯碗的常見基準；便當飯壓得較實時可能更高。"
+  },
+  {
+    "label": "便當飯半格",
+    "category": "rice",
+    "rough_kcal": 120,
+    "notes": "適合回應使用者說飯半格、少飯、飯吃一半。"
+  },
+  {
+    "label": "便當飯正常一格",
+    "category": "rice",
+    "rough_kcal": 220,
+    "notes": "比家用碗更貼近台灣便當店的常見視覺量。"
+  },
+  {
+    "label": "一個手掌大小的肉",
+    "category": "protein",
+    "rough_kcal": 140,
+    "notes": "適合估瘦肉、雞胸、魚類；若是帶皮或油炸需上修。"
+  },
+  {
+    "label": "一掌心高脂肉",
+    "category": "protein",
+    "rough_kcal": 220,
+    "notes": "適合五花、控肉、炸排骨、帶皮雞腿等高脂蛋白。"
+  },
+  {
+    "label": "兩格青菜",
+    "category": "vegetable",
+    "rough_kcal": 60,
+    "notes": "以清炒或燙青菜為前提；若是勾芡或大量油炒需上修。"
+  },
+  {
+    "label": "一茶匙油或沙茶",
+    "category": "fat",
+    "rough_kcal": 45,
+    "notes": "適合用來估算沙茶、胡麻醬、美乃滋、煎台油。"
+  },
+  {
+    "label": "一大匙醬料",
+    "category": "sauce",
+    "rough_kcal": 60,
+    "notes": "若是胡麻醬、沙茶、蛋黃醬等高脂醬料，通常至少比一茶匙更高。"
+  },
+  {
+    "label": "500ml 含糖飲料",
+    "category": "drink",
+    "rough_kcal": 180,
+    "notes": "適合一般中杯奶茶、果茶的保守估算起點。"
+  },
+  {
+    "label": "700ml 全糖手搖飲",
+    "category": "drink",
+    "rough_kcal": 260,
+    "notes": "只代表糖帶來的熱量，不含奶基底與配料的額外熱量。"
+  },
+  {
+    "label": "700ml 珍珠奶茶",
+    "category": "drink",
+    "rough_kcal": 550,
+    "notes": "適合做大杯珍奶的比較法基準；全糖高配料版本可更高。"
+  },
+  {
+    "label": "10 顆水餃",
+    "category": "staple_meal",
+    "rough_kcal": 420,
+    "notes": "對多數人來說 10 顆水餃已接近一份完整主食。"
+  },
+  {
+    "label": "8 顆鍋貼",
+    "category": "staple_meal",
+    "rough_kcal": 300,
+    "notes": "鍋貼受煎油量影響大，若鍋底油多需上修。"
+  },
+  {
+    "label": "一盒便當",
+    "category": "bento",
+    "rough_kcal": 750,
+    "notes": "只適合做粗估起點，後續仍需問主菜、飯量與配菜油量。"
+  },
+  {
+    "label": "火鍋喝兩碗湯",
+    "category": "soup",
+    "rough_kcal": 120,
+    "notes": "清湯與重口味湯底差異極大，麻辣或濃湯需顯著上修。"
+  }
+]

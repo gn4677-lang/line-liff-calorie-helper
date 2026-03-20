@@ -40,6 +40,11 @@ Design goals:
 - not purple-default AI styling
 - preserve readability on mobile
 
+Output hygiene:
+- final written outputs must be free of unrelated filler, repeated stock phrases, and token-loop noise
+- if a report, artifact, or summary contains duplicated text that is not grounded in the task, delete it instead of preserving it
+- never append repeated success markers or any other unrelated stock text to summaries, metadata, or deliverables
+
 Do:
 - propose a refined information architecture inside the 3-page structure
 - create reusable components

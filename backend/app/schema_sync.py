@@ -35,6 +35,7 @@ def ensure_runtime_schema(engine) -> None:
         add_if_missing("preferences", "hard_dislikes", f"{json_type} DEFAULT '[]'")
         add_if_missing("preferences", "breakfast_habit", "VARCHAR(50) DEFAULT 'unknown'")
         add_if_missing("preferences", "carb_need", "VARCHAR(50) DEFAULT 'flexible'")
+        add_if_missing("preferences", "communication_profile", f"{json_type} DEFAULT '{{}}'")
 
     if has_table("meal_drafts"):
         add_if_missing("meal_drafts", "meal_session_id", "VARCHAR(36)")
@@ -46,6 +47,9 @@ def ensure_runtime_schema(engine) -> None:
         add_if_missing("meal_logs", "metadata", f"{json_type} DEFAULT '{{}}'")
         with engine.begin() as connection:
             connection.execute(text("UPDATE meal_logs SET event_at = created_at WHERE event_at IS NULL"))
+
+    if has_table("foods"):
+        add_if_missing("foods", "store_context", f"{json_type} DEFAULT '{{}}'")
 
     with engine.begin() as connection:
         if has_table("meal_drafts"):
