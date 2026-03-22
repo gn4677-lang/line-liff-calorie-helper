@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 import uuid
 
+import pytest
+
 from app.models import ActivityAdjustment, BodyGoal, MealEvent, Notification, RecommendationProfile, RecommendationSession, User
 from app.services.observability import (
     create_conversation_trace,
@@ -14,6 +16,8 @@ from app.services.observability import (
     record_unknown_case_event,
     start_task_run,
 )
+
+pytestmark = pytest.mark.agentic
 
 
 def _get_user(db):

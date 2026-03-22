@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import Request
 from sqlalchemy.orm import Session
 
+from ..config import canary_line_user_id_list, canary_user_id_list
 from ..models import (
     ConversationTrace,
     ErrorEvent,
@@ -23,6 +24,30 @@ from ..models import (
 
 MAX_TEXT_LENGTH = 2000
 SENSITIVE_KEY_PATTERN = re.compile(r"(token|secret|password|authorization|api[_-]?key|cookie)", re.IGNORECASE)
+SAFE_OBSERVABILITY_KEYS = {
+    # Token counts
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    # Budget info
+    "token_budget_per_hour",
+    "cost_budget_usd_per_day",
+    "request_budget_per_hour",
+    # Rate limit info
+    "rate_limit_remaining_tokens",
+    "rate_limit_remaining_requests",
+    "rate_limit_reset_tokens_s",
+    "rate_limit_reset_requests_s",
+    # Cost tracking
+    "estimated_cost_usd",
+    "estimated_cost",
+    # Request tracking
+    "request_count",
+    # Provider info
+    "provider_name",
+    "model_name",
+    "model_hint",
+}
 NEGATIVE_FEEDBACK_RULES = [
     {
         "feedback_type": "explicit_negative",
@@ -82,6 +107,8 @@ def create_conversation_trace(
     message_id: str | None = None,
     reply_to_trace_id: str | None = None,
     is_system_initiated: bool = False,
+    is_canary: bool = False,
+    traffic_class: str = "standard",
 ) -> str:
     trace_row_id = trace_id
     row = ConversationTrace(
@@ -93,6 +120,8 @@ def create_conversation_trace(
         message_id=message_id,
         reply_to_trace_id=reply_to_trace_id,
         is_system_initiated=is_system_initiated,
+        is_canary=is_canary,
+        traffic_class=traffic_class or "standard",
         task_family=task_family,
         task_confidence=task_confidence,
         source_mode=source_mode,
@@ -115,12 +144,26 @@ def start_task_run(
     model_name: str | None = None,
     prompt_version: str | None = None,
     knowledge_packet_version: str | None = None,
+    is_canary: bool | None = None,
+    traffic_class: str | None = None,
+    result_summary: dict[str, Any] | None = None,
 ) -> str:
     task_run_id = str(uuid.uuid4())
+    inherited_is_canary = bool(is_canary)
+    inherited_traffic_class = traffic_class or "standard"
+    if is_canary is None or traffic_class is None:
+        trace = db.get(ConversationTrace, trace_id)
+        if trace is not None:
+            if is_canary is None:
+                inherited_is_canary = bool(trace.is_canary)
+            if traffic_class is None:
+                inherited_traffic_class = trace.traffic_class or "standard"
     row = TaskRun(
         id=task_run_id,
         trace_id=trace_id,
         user_id=user_id,
+        is_canary=inherited_is_canary,
+        traffic_class=inherited_traffic_class,
         task_family=task_family,
         route_layer_1=route_layer_1,
         route_layer_2=route_layer_2,
@@ -130,7 +173,7 @@ def start_task_run(
         knowledge_packet_version=knowledge_packet_version,
         started_at=datetime.now(timezone.utc),
         status="success",
-        result_summary={},
+        result_summary=_sanitize_payload(result_summary or {}),
     )
     _persist_row(db, row)
     return task_run_id
@@ -159,7 +202,9 @@ def finish_task_run(
         row.status = status
         row.error_type = error_type
         row.fallback_reason = _sanitize_text(fallback_reason or "") if fallback_reason else None
-        row.result_summary = _sanitize_payload(result_summary or {})
+        merged_summary = dict(row.result_summary or {})
+        merged_summary.update(_sanitize_payload(result_summary or {}))
+        row.result_summary = merged_summary
         log_db.add(row)
         log_db.commit()
 
@@ -427,6 +472,26 @@ def detect_explicit_feedback(text: str) -> dict[str, str] | None:
     return None
 
 
+def resolve_traffic_class(
+    *,
+    user_id: int | str | None = None,
+    line_user_id: str | None = None,
+    input_metadata: dict[str, Any] | None = None,
+) -> tuple[bool, str]:
+    metadata = input_metadata or {}
+    if metadata.get("is_canary") is True:
+        return True, str(metadata.get("traffic_class") or "self_use_canary")
+
+    canary_line_ids = set(canary_line_user_id_list())
+    canary_user_ids = set(canary_user_id_list())
+    is_canary = False
+    if line_user_id and line_user_id in canary_line_ids:
+        is_canary = True
+    if user_id is not None and str(user_id) in canary_user_ids:
+        is_canary = True
+    return is_canary, "self_use_canary" if is_canary else "standard"
+
+
 def provider_descriptor(provider: Any, *, task_family: str, source_mode: str | None = None) -> tuple[str | None, str | None]:
     provider_name = type(provider).__name__ if provider is not None else None
     model_name = None
@@ -446,6 +511,10 @@ def provider_descriptor(provider: Any, *, task_family: str, source_mode: str | N
 
 
 def route_layers_for_task(task_family: str) -> tuple[str, str]:
+    if task_family == "line_webhook_ingress":
+        return "ingress", task_family
+    if task_family == "line_webhook_event":
+        return "worker", task_family
     if task_family in {"meal_log_now", "meal_log_correction", "clarification", "confirmation"}:
         return "logging", task_family
     if task_family in {"remaining_or_recommendation", "nearby_recommendation", "weekly_drift_probe", "future_event_probe", "planning", "compensation"}:
@@ -524,10 +593,13 @@ def _sanitize_payload(value: Any) -> Any:
     if isinstance(value, dict):
         sanitized: dict[str, Any] = {}
         for key, item in value.items():
-            if SENSITIVE_KEY_PATTERN.search(str(key)):
+            normalized_key = str(key)
+            if normalized_key in SAFE_OBSERVABILITY_KEYS:
+                sanitized[normalized_key] = _sanitize_payload(item)
+            elif SENSITIVE_KEY_PATTERN.search(normalized_key):
                 sanitized[str(key)] = "<redacted>"
             else:
-                sanitized[str(key)] = _sanitize_payload(item)
+                sanitized[normalized_key] = _sanitize_payload(item)
         return sanitized
     if isinstance(value, list):
         return [_sanitize_payload(item) for item in value[:50]]

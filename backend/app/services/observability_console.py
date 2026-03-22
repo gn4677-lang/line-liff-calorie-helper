@@ -16,6 +16,7 @@ from ..models import (
     ConversationTrace,
     ErrorEvent,
     FeedbackEvent,
+    InboundEvent,
     KnowledgeEvent,
     MealEvent,
     MemoryHypothesis,
@@ -27,6 +28,7 @@ from ..models import (
     RecommendationSession,
     ReportingBias,
     ReviewQueueItem,
+    SearchJob,
     TaskRun,
     UncertaintyEvent,
     UnknownCaseEvent,
@@ -238,6 +240,8 @@ def build_observability_dashboard(
     product_panels = _build_product_panels(db, since=since)
     memory_panels = _build_memory_panels(db, user_id=user_id)
     operational_panels = _build_operational_panels(db, since=since)
+    webhook_queue_panels = _build_webhook_queue_panels(db)
+    notification_panels = _build_notification_panels(db, since=since)
     eval_panels = _build_eval_panels(db, since=since)
     attention_panels = _build_attention_panels(db)
     return {
@@ -251,8 +255,46 @@ def build_observability_dashboard(
         "product_panels": product_panels,
         "memory_panels": memory_panels,
         "operational_panels": operational_panels,
+        "webhook_queue_panels": webhook_queue_panels,
+        "notification_panels": notification_panels,
         "eval_panels": eval_panels,
         "attention_panels": attention_panels,
+    }
+
+
+def build_eval_export(
+    db: Session,
+    *,
+    window_hours: int = 168,
+    limit: int = 200,
+) -> dict[str, Any]:
+    generated_at = datetime.now(timezone.utc)
+    since = generated_at - timedelta(hours=window_hours)
+    recent_runs = (
+        db.query(TaskRun)
+        .filter(TaskRun.started_at >= since)
+        .order_by(TaskRun.started_at.desc())
+        .limit(limit)
+        .all()
+    )
+    webhook_runs = [
+        row for row in recent_runs
+        if row.task_family in {"line_webhook_ingress", "line_webhook_event"}
+    ]
+    planning_runs = [
+        row for row in recent_runs
+        if row.task_family in {"planning", "compensation"}
+    ]
+    canary_runs = [row for row in recent_runs if bool(row.is_canary)]
+    return {
+        "generated_at": generated_at,
+        "window_hours": window_hours,
+        "usage_panels": _build_usage_panels(db, since=since),
+        "eval_panels": _build_eval_panels(db, since=since),
+        "recent_webhook_runs": [_task_run_row(row) for row in webhook_runs],
+        "recent_planning_runs": [_task_run_row(row) for row in planning_runs],
+        "recent_canary_runs": [_task_run_row(row) for row in canary_runs[:limit]],
+        "canary_transcript_review": _build_canary_transcript_review(db, canary_runs=canary_runs, limit=min(limit, 50)),
     }
 
 
@@ -265,8 +307,12 @@ def list_trace_summaries(
     status: str | None = None,
     provider_name: str | None = None,
     model_name: str | None = None,
+    execution_phase: str | None = None,
+    ingress_mode: str | None = None,
     route_policy: str | None = None,
     llm_cache: str | None = None,
+    is_canary: bool | None = None,
+    traffic_class: str | None = None,
     has_error: bool | None = None,
     has_feedback: bool | None = None,
     has_unknown_case: bool | None = None,
@@ -280,9 +326,13 @@ def list_trace_summaries(
         query = query.filter(ConversationTrace.surface == surface)
     if source_mode:
         query = query.filter(ConversationTrace.source_mode == source_mode)
+    if is_canary is not None:
+        query = query.filter(ConversationTrace.is_canary == is_canary)
+    if traffic_class:
+        query = query.filter(ConversationTrace.traffic_class == traffic_class)
 
     trace_id_filters: list[Any] = []
-    if status or provider_name or model_name or route_policy or llm_cache:
+    if status or provider_name or model_name or route_policy or llm_cache or execution_phase or ingress_mode:
         task_query = db.query(TaskRun.trace_id).distinct()
         if status:
             task_query = task_query.filter(TaskRun.status == status)
@@ -300,10 +350,25 @@ def list_trace_summaries(
                     continue
                 if llm_cache and _task_run_summary_value(run, "llm_cache") != llm_cache:
                     continue
+                if execution_phase and _task_run_summary_value(run, "execution_phase") != execution_phase:
+                    continue
+                if ingress_mode and _task_run_summary_value(run, "ingress_mode") != ingress_mode:
+                    continue
                 filtered_trace_ids.add(run.trace_id)
             trace_id_filters.append(filtered_trace_ids)
         else:
-            trace_id_filters.append(trace_ids)
+            if execution_phase or ingress_mode:
+                filtered_trace_ids: set[str] = set()
+                runs = db.query(TaskRun).filter(TaskRun.trace_id.in_(trace_ids)).all() if trace_ids else []
+                for run in runs:
+                    if execution_phase and _task_run_summary_value(run, "execution_phase") != execution_phase:
+                        continue
+                    if ingress_mode and _task_run_summary_value(run, "ingress_mode") != ingress_mode:
+                        continue
+                    filtered_trace_ids.add(run.trace_id)
+                trace_id_filters.append(filtered_trace_ids)
+            else:
+                trace_id_filters.append(trace_ids)
     if has_error is not None:
         error_ids = set(row[0] for row in db.query(ErrorEvent.trace_id).distinct().all())
         trace_id_filters.append(error_ids if has_error else None)
@@ -374,10 +439,14 @@ def list_trace_summaries(
                 "route_status": latest_run.status if latest_run else "unknown",
                 "provider_name": latest_run.provider_name if latest_run else None,
                 "model_name": latest_run.model_name if latest_run else None,
+                "execution_phase": _task_run_summary_value(latest_run, "execution_phase") if latest_run else None,
+                "ingress_mode": _task_run_summary_value(latest_run, "ingress_mode") if latest_run else None,
                 "route_policy": _task_run_summary_value(latest_run, "route_policy") if latest_run else None,
                 "route_target": _task_run_summary_value(latest_run, "route_target") if latest_run else None,
                 "llm_cache": _task_run_summary_value(latest_run, "llm_cache") if latest_run else None,
                 "latency_ms": latest_run.latency_ms if latest_run else None,
+                "is_canary": bool(trace.is_canary),
+                "traffic_class": trace.traffic_class or "standard",
                 "has_error": trace.id in error_trace_ids,
                 "has_feedback": trace.id in feedback_trace_ids,
                 "has_unknown_case": trace.id in unknown_trace_ids,
@@ -944,6 +1013,107 @@ def _build_operational_panels(db: Session, *, since: datetime) -> dict[str, Any]
     }
 
 
+def _build_webhook_queue_panels(db: Session) -> dict[str, Any]:
+    """Build webhook queue depth and worker lag monitoring panels."""
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    # Inbound events stats
+    inbound_pending = db.query(InboundEvent).filter(InboundEvent.status == "pending").count()
+    inbound_running = db.query(InboundEvent).filter(InboundEvent.status == "running").count()
+    # Stuck events: running but lease expired (compare as UTC)
+    stuck_cutoff = now - timedelta(minutes=5)
+    inbound_stuck = (
+        db.query(InboundEvent)
+        .filter(
+            InboundEvent.status == "running",
+            InboundEvent.lease_expires_at < stuck_cutoff,
+        )
+        .count()
+    )
+    # Average queue age for pending events
+    oldest_pending = db.query(InboundEvent.created_at).filter(InboundEvent.status == "pending").order_by(InboundEvent.created_at.asc()).first()
+    avg_queue_age_seconds = 0.0
+    if oldest_pending and oldest_pending[0]:
+        pending_created = oldest_pending[0]
+        # Handle naive datetime by assuming UTC
+        if pending_created.tzinfo is None:
+            pending_created = pending_created.replace(tzinfo=timezone.utc)
+        avg_queue_age_seconds = (now - pending_created).total_seconds()
+    # Worker lag: time since oldest pending event
+    worker_lag_seconds = avg_queue_age_seconds
+
+    # Search jobs stats
+    search_pending = db.query(SearchJob).filter(SearchJob.status == "pending").count()
+    search_running = db.query(SearchJob).filter(SearchJob.status == "running").count()
+    search_stuck = (
+        db.query(SearchJob)
+        .filter(
+            SearchJob.status == "running",
+            SearchJob.lease_expires_at < stuck_cutoff,
+        )
+        .count()
+    )
+
+    return {
+        "inbound_events": {
+            "pending": inbound_pending,
+            "running": inbound_running,
+            "stuck": inbound_stuck,
+            "avg_queue_age_seconds": round(avg_queue_age_seconds, 1),
+            "worker_lag_seconds": round(worker_lag_seconds, 1),
+        },
+        "search_jobs": {
+            "pending": search_pending,
+            "running": search_running,
+            "stuck": search_stuck,
+        },
+        "health_status": (
+            "critical" if inbound_stuck > 0 or search_stuck > 0
+            else "warning" if inbound_pending > 50 or search_pending > 50
+            else "healthy"
+        ),
+    }
+
+
+def _build_notification_panels(db: Session, *, since: datetime) -> dict[str, Any]:
+    """Build notification delivery tracking panels."""
+    notifications = (
+        db.query(Notification)
+        .filter(Notification.created_at >= since)
+        .all()
+    )
+    total_count = len(notifications)
+    by_type: dict[str, dict[str, int]] = {}
+    by_status: dict[str, int] = {}
+    for notif in notifications:
+        notif_type = notif.type or "unknown"
+        notif_status = notif.status or "unknown"
+        by_type.setdefault(notif_type, {"total": 0, "unread": 0, "read": 0})
+        by_type[notif_type]["total"] += 1
+        if notif_status == "unread":
+            by_type[notif_type]["unread"] += 1
+        elif notif_status == "read":
+            by_type[notif_type]["read"] += 1
+        by_status[notif_status] = by_status.get(notif_status, 0) + 1
+
+    # Calculate push delivery metrics (unread notifications that are not 'read' yet might indicate delivery issues)
+    # For now, track by status distribution
+    return {
+        "total_notifications": total_count,
+        "by_type": [
+            {"type": notif_type, "total": stats["total"], "unread": stats["unread"], "read": stats["read"]}
+            for notif_type, stats in sorted(by_type.items(), key=lambda x: -x[1]["total"])
+        ],
+        "by_status": [{"status": status, "count": count} for status, count in sorted(by_status.items(), key=lambda x: -x[1])],
+        "health_status": (
+            "critical" if by_status.get("failed", 0) > 5
+            else "warning" if by_status.get("failed", 0) > 0
+            else "healthy"
+        ),
+    }
+
+
 def _build_usage_panels(db: Session, *, since: datetime) -> dict[str, Any]:
     model_rows = (
         db.query(TaskRun.provider_name, TaskRun.model_name, func.count(TaskRun.id), func.avg(TaskRun.latency_ms))
@@ -961,14 +1131,43 @@ def _build_usage_panels(db: Session, *, since: datetime) -> dict[str, Any]:
         .all()
     )
     recent_runs = db.query(TaskRun).filter(TaskRun.started_at >= since).all()
+    execution_phase_rows = _group_task_runs_by_summary(recent_runs, key="execution_phase")
+    ingress_mode_rows = _group_task_runs_by_summary(recent_runs, key="ingress_mode")
     route_policy_rows = _group_task_runs_by_summary(recent_runs, key="route_policy")
     llm_cache_rows = _group_task_runs_by_summary(recent_runs, key="llm_cache")
     route_target_rows = _group_task_runs_by_summary(recent_runs, key="route_target")
+    planning_copy_rows = _group_task_runs_by_summary(recent_runs, key="planning_copy_layer")
     saved_local_count = sum(row["count"] for row in route_target_rows if row["label"] == "heuristic")
     remote_llm_count = sum(row["count"] for row in route_target_rows if row["label"] == "builderspace")
+    usage_rows = [_extract_llm_usage(row.result_summary or {}) for row in recent_runs]
+    usage_rows = [row for row in usage_rows if row]
+    prompt_tokens = sum(int(row.get("prompt_tokens") or 0) for row in usage_rows)
+    completion_tokens = sum(int(row.get("completion_tokens") or 0) for row in usage_rows)
+    total_tokens = sum(int(row.get("total_tokens") or 0) for row in usage_rows)
+    estimated_cost_usd = round(sum(float(row.get("estimated_cost_usd") or 0.0) for row in usage_rows), 6)
+    usage_requests = sum(int(row.get("request_count") or 0) for row in usage_rows)
+    latest_budget_snapshot = {}
+    for row in usage_rows:
+        for key in (
+            "request_budget_per_hour",
+            "token_budget_per_hour",
+            "cost_budget_usd_per_day",
+            "rate_limit_remaining_requests",
+            "rate_limit_remaining_tokens",
+            "rate_limit_reset_requests_s",
+            "rate_limit_reset_tokens_s",
+        ):
+            if row.get(key) is not None:
+                latest_budget_snapshot[key] = row.get(key)
+    token_usage_available = bool(usage_rows)
     return {
-        "token_usage_available": False,
-        "note": "This panel currently shows provider/model request volume and latency. Token and cost accounting can be added once providers return usage metadata consistently.",
+        "token_usage_available": token_usage_available,
+        "note": (
+            "Token and cost accounting is aggregated from task-run llm_usage metadata. "
+            "Runs without provider usage metadata are excluded from the precise totals."
+            if token_usage_available
+            else "This panel currently shows provider/model request volume and latency. Precise token and cost totals appear once llm_usage metadata is present in task runs."
+        ),
         "provider_request_counts": [
             {"label": provider or "unknown", "count": int(count or 0)}
             for provider, count in provider_rows
@@ -982,15 +1181,99 @@ def _build_usage_panels(db: Session, *, since: datetime) -> dict[str, Any]:
             }
             for provider, model, count, avg_latency in model_rows
         ],
+        "execution_phase_breakdown": execution_phase_rows,
+        "ingress_mode_breakdown": ingress_mode_rows,
         "route_policy_breakdown": route_policy_rows,
         "llm_cache_breakdown": llm_cache_rows,
         "route_target_breakdown": route_target_rows,
+        "planning_copy_breakdown": planning_copy_rows,
+        "token_cost_summary": {
+            "tracked_request_count": usage_requests,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens or (prompt_tokens + completion_tokens),
+            "estimated_cost_usd": estimated_cost_usd,
+        },
+        "budget_snapshot": latest_budget_snapshot,
+        "packet_coverage_summary": {
+            "memory_packet_present_runs": _count_task_runs_with_summary_value(recent_runs, key="memory_packet_present", expected="True"),
+            "communication_profile_present_runs": _count_task_runs_with_summary_value(recent_runs, key="communication_profile_present", expected="True"),
+            "planning_copy_attempted_runs": _count_task_runs_with_summary_value(recent_runs, key="planning_copy_attempted", expected="True"),
+        },
         "llm_path_summary": {
             "saved_local_requests": saved_local_count,
             "remote_llm_requests": remote_llm_count,
             "cache_hits": sum(row["count"] for row in llm_cache_rows if row["label"] == "hit"),
+            "webhook_ingress_events": sum(row["count"] for row in execution_phase_rows if row["label"] == "webhook_ingress"),
+            "webhook_worker_runs": sum(row["count"] for row in execution_phase_rows if row["label"] == "webhook_worker"),
         },
     }
+
+
+def _extract_llm_usage(summary: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(summary, dict):
+        return {}
+    candidates = [
+        summary.get("llm_usage"),
+        (summary.get("recommendation_policy") or {}).get("llm_usage") if isinstance(summary.get("recommendation_policy"), dict) else None,
+        (summary.get("weekly_coaching") or {}).get("llm_usage") if isinstance(summary.get("weekly_coaching"), dict) else None,
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate:
+            return candidate
+    return {}
+
+
+def _build_canary_transcript_review(
+    db: Session,
+    *,
+    canary_runs: list[TaskRun],
+    limit: int,
+) -> list[dict[str, Any]]:
+    if not canary_runs:
+        return []
+    review_items: list[dict[str, Any]] = []
+    seen_trace_ids: set[str] = set()
+    for run in canary_runs:
+        if run.trace_id in seen_trace_ids:
+            continue
+        seen_trace_ids.add(run.trace_id)
+        trace = db.get(ConversationTrace, run.trace_id)
+        if trace is None:
+            continue
+        feedback_rows = (
+            db.query(FeedbackEvent)
+            .filter(FeedbackEvent.trace_id == run.trace_id)
+            .order_by(FeedbackEvent.created_at.asc())
+            .all()
+        )
+        outcome_rows = (
+            db.query(OutcomeEvent)
+            .filter(OutcomeEvent.trace_id == run.trace_id)
+            .order_by(OutcomeEvent.created_at.asc())
+            .all()
+        )
+        review_items.append(
+            {
+                "trace_id": run.trace_id,
+                "task_family": run.task_family,
+                "surface": trace.surface,
+                "traffic_class": trace.traffic_class,
+                "created_at": trace.created_at,
+                "input_text": trace.input_text,
+                "provider_name": run.provider_name,
+                "model_name": run.model_name,
+                "status": run.status,
+                "fallback_reason": run.fallback_reason,
+                "result_summary": run.result_summary or {},
+                "feedback_labels": [row.feedback_label for row in feedback_rows],
+                "outcome_types": [row.outcome_type for row in outcome_rows],
+                "review_reason": "canary_transcript_review",
+            }
+        )
+        if len(review_items) >= limit:
+            break
+    return review_items
 
 
 def _build_product_panels(db: Session, *, since: datetime) -> dict[str, Any]:
@@ -1111,6 +1394,34 @@ def _group_task_runs_by_summary(task_runs: list[TaskRun], *, key: str) -> list[d
     return items
 
 
+def _group_task_runs_by_attr(task_runs: list[TaskRun], *, attr: str) -> list[dict[str, Any]]:
+    buckets: dict[str, list[int]] = {}
+    counts: dict[str, int] = {}
+    for row in task_runs:
+        value = getattr(row, attr, None)
+        label = str(value).strip() if value is not None and str(value).strip() else "unknown"
+        counts[label] = counts.get(label, 0) + 1
+        buckets.setdefault(label, [])
+        if row.latency_ms is not None:
+            buckets[label].append(int(row.latency_ms))
+    items = []
+    for label, count in counts.items():
+        latencies = buckets.get(label, [])
+        items.append(
+            {
+                "label": label,
+                "count": int(count),
+                "avg_latency_ms": int(sum(latencies) / len(latencies)) if latencies else 0,
+            }
+        )
+    items.sort(key=lambda item: (-item["count"], item["label"]))
+    return items
+
+
+def _count_task_runs_with_summary_value(task_runs: list[TaskRun], *, key: str, expected: str) -> int:
+    return sum(1 for row in task_runs if (_task_run_summary_value(row, key) or "") == expected)
+
+
 def _build_memory_panels(db: Session, *, user_id: int | None) -> dict[str, Any]:
     if user_id is None:
         primary_user = db.query(User).order_by(User.updated_at.desc(), User.created_at.desc()).first()
@@ -1191,6 +1502,7 @@ def _build_memory_panels(db: Session, *, user_id: int | None) -> dict[str, Any]:
 
 
 def _build_eval_panels(db: Session, *, since: datetime) -> dict[str, Any]:
+    recent_runs = db.query(TaskRun).filter(TaskRun.started_at >= since).all()
     unknown_label_rows = (
         db.query(UnknownCaseEvent.unknown_type, func.count(UnknownCaseEvent.id))
         .filter(UnknownCaseEvent.created_at >= since)
@@ -1207,9 +1519,32 @@ def _build_eval_panels(db: Session, *, since: datetime) -> dict[str, Any]:
         .limit(10)
         .all()
     )
+    error_code_rows = (
+        db.query(ErrorEvent.error_code, func.count(ErrorEvent.id))
+        .filter(
+            ErrorEvent.created_at >= since,
+            ErrorEvent.component.in_(("inbound_event_worker", "background_worker", "knowledge")),
+        )
+        .group_by(ErrorEvent.error_code)
+        .order_by(func.count(ErrorEvent.id).desc(), ErrorEvent.error_code.asc())
+        .limit(10)
+        .all()
+    )
+    webhook_runs = [row for row in recent_runs if row.task_family in {"line_webhook_ingress", "line_webhook_event"}]
     return {
         "top_unknown_labels": [{"label": label or "unknown", "count": int(count or 0)} for label, count in unknown_label_rows],
         "top_feedback_labels": [{"label": label or "unknown", "count": int(count or 0)} for label, count in feedback_label_rows],
+        "execution_phase_breakdown": _group_task_runs_by_summary(recent_runs, key="execution_phase"),
+        "ingress_mode_breakdown": _group_task_runs_by_summary(recent_runs, key="ingress_mode"),
+        "webhook_worker_status_breakdown": _group_task_runs_by_attr(webhook_runs, attr="status"),
+        "fallback_reason_breakdown": _group_task_runs_by_attr([row for row in recent_runs if row.fallback_reason], attr="fallback_reason"),
+        "deterministic_integration_error_codes": [{"label": code or "unknown", "count": int(count or 0)} for code, count in error_code_rows],
+        "packet_coverage_summary": {
+            "memory_packet_present_runs": _count_task_runs_with_summary_value(recent_runs, key="memory_packet_present", expected="True"),
+            "communication_profile_present_runs": _count_task_runs_with_summary_value(recent_runs, key="communication_profile_present", expected="True"),
+            "planning_copy_attempted_runs": _count_task_runs_with_summary_value(recent_runs, key="planning_copy_attempted", expected="True"),
+            "knowledge_packet_version_runs": sum(1 for row in recent_runs if bool(row.knowledge_packet_version)),
+        },
     }
 
 
@@ -1295,6 +1630,8 @@ def _trace_row(row: ConversationTrace) -> dict[str, Any]:
         "message_id": row.message_id,
         "reply_to_trace_id": row.reply_to_trace_id,
         "is_system_initiated": row.is_system_initiated,
+        "is_canary": row.is_canary,
+        "traffic_class": row.traffic_class,
         "task_family": row.task_family,
         "task_confidence": row.task_confidence,
         "source_mode": row.source_mode,
@@ -1309,6 +1646,8 @@ def _task_run_row(row: TaskRun) -> dict[str, Any]:
         "id": row.id,
         "trace_id": row.trace_id,
         "user_id": row.user_id,
+        "is_canary": row.is_canary,
+        "traffic_class": row.traffic_class,
         "task_family": row.task_family,
         "route_layer_1": row.route_layer_1,
         "route_layer_2": row.route_layer_2,
@@ -1323,11 +1662,17 @@ def _task_run_row(row: TaskRun) -> dict[str, Any]:
         "error_type": row.error_type,
         "fallback_reason": row.fallback_reason,
         "result_summary": row.result_summary,
+        "execution_phase": _task_run_summary_value(row, "execution_phase"),
+        "ingress_mode": _task_run_summary_value(row, "ingress_mode"),
         "route_policy": _task_run_summary_value(row, "route_policy"),
         "route_target": _task_run_summary_value(row, "route_target"),
         "route_reason": _task_run_summary_value(row, "route_reason"),
         "llm_cache": _task_run_summary_value(row, "llm_cache"),
         "knowledge_strategy": _task_run_summary_value(row, "knowledge_strategy"),
+        "memory_packet_present": _task_run_summary_value(row, "memory_packet_present"),
+        "communication_profile_present": _task_run_summary_value(row, "communication_profile_present"),
+        "planning_copy_attempted": _task_run_summary_value(row, "planning_copy_attempted"),
+        "planning_copy_layer": _task_run_summary_value(row, "planning_copy_layer"),
     }
 
 

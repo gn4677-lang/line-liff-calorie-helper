@@ -146,6 +146,7 @@ function ExploreSheet({
     goldenOrders,
     createSavedPlace,
     createFavoriteStore,
+    showToast,
   } = useApp()
   const [manualQuery, setManualQuery] = useState(locationState.query ?? '')
   const [savedPlaceForm, setSavedPlaceForm] = useState({ label: '', address: '', is_default: false })
@@ -163,6 +164,9 @@ function ExploreSheet({
     try {
       await createSavedPlace(savedPlaceForm)
       setSavedPlaceForm({ label: '', address: '', is_default: false })
+      showToast('已新增常用地點', 'success')
+    } catch {
+      showToast('儲存失敗，請確認網路連線後重試', 'error')
     } finally {
       setSavingPlace(false)
     }
@@ -174,6 +178,9 @@ function ExploreSheet({
     try {
       await createFavoriteStore(favoriteStoreForm)
       setFavoriteStoreForm({ name: '', address: '', external_link: '' })
+      showToast('已新增店家', 'success')
+    } catch {
+      showToast('儲存失敗，請確認網路連線後重試', 'error')
     } finally {
       setSavingStore(false)
     }
@@ -348,8 +355,8 @@ export default function EatPage() {
     goldenOrders,
     refreshEatFeed,
     savedPlaces,
-    setMessage,
     summary,
+    showToast,
   } = useApp()
   const [selectedChipId, setSelectedChipId] = useState<string | null>(null)
   const [expandedCandidateId, setExpandedCandidateId] = useState<string | null>(null)
@@ -416,7 +423,7 @@ export default function EatPage() {
 
   async function handleUseCurrentLocation() {
     if (!navigator.geolocation) {
-      setMessage('這個裝置不支援定位。')
+      showToast('這個裝置不支援定位', 'error')
       return
     }
 
@@ -430,9 +437,14 @@ export default function EatPage() {
           label: '目前位置',
         })
         setLocating(false)
+        showToast('已使用目前位置', 'success')
       },
-      () => {
-        setMessage('無法取得定位，先試試手動輸入地點。')
+      (error) => {
+        if (error.code === error.PERMISSION_DENIED) {
+          showToast('請開啟手機定位權限', 'error')
+        } else {
+          showToast('無法取得定位，請試試手動輸入地點', 'error')
+        }
         setLocating(false)
       },
       { enableHighAccuracy: true, timeout: 8000 },

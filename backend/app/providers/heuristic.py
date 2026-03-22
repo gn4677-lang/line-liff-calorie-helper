@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from .base import EstimateResult
 
@@ -43,6 +44,8 @@ class HeuristicProvider:
         clarification_count: int,
         attachments: list[dict],
         knowledge_packet: dict | None = None,
+        memory_packet: dict | None = None,
+        communication_profile: dict | None = None,
     ) -> EstimateResult:
         combined = " ".join(filter(None, [text] + [item.get("transcript", "") for item in attachments])).strip()
         evidence_slots = self._empty_evidence_slots(source_mode)
@@ -302,3 +305,15 @@ class HeuristicProvider:
             "high_calorie_modifiers": False,
             "knowledge_strategy": None,
         }
+
+    async def complete_structured(
+        self,
+        *,
+        system_prompt: str,
+        user_payload: dict[str, Any],
+        max_tokens: int = 220,
+        temperature: float = 0.1,
+        model_hint: str = "chat",
+        request_options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {}

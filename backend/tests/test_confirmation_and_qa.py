@@ -1,9 +1,13 @@
 from datetime import date
 
+import pytest
+
 from app.models import User
 from app.providers.base import EstimateResult
 from app.services.confirmation import decide_confirmation
 from app.services.knowledge import build_suggested_update_packet
+
+pytestmark = pytest.mark.agentic
 
 
 def test_intake_returns_confirmation_metadata_and_answer_options(client):
@@ -27,6 +31,9 @@ def test_day_summary_includes_weekly_fields(client):
     assert "weekly_consumed_kcal" in summary
     assert "weekly_drift_kcal" in summary
     assert "weekly_drift_status" in summary
+    assert "weekly_coach_message" in summary
+    assert "weekly_strategy_label" in summary
+    assert "weekly_reason_factors" in summary
 
 
 def test_local_nutrition_qa_hits_familymart_archetype_pack(client):

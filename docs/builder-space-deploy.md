@@ -1,29 +1,48 @@
 # Builder Space Deploy
 
+This doc reflects the current post-rollout runtime.
+
+Read these first:
+
+- `docs/production-grade-llm-rollout-report-2026-03-20.md`
+- `docs/operator-runtime-registry.md`
+
 ## Current Readiness
 
 - Root `Dockerfile`: ready
-- Single process runtime: ready
-- Single `PORT` entrypoint: ready
-- FastAPI health endpoint: ready
-- Frontend static build served by backend: ready
-- Supabase Postgres and Storage: ready
-- LINE webhook path: ready at `/webhooks/line`
+- Same-origin web app: ready
+- Role-based runtime split: ready
+- FastAPI serves `frontend/dist`: ready
+- Liveness/readiness endpoints: ready
+- LINE webhook ingress: ready at `/webhooks/line`
+- Worker lease/reclaim model: ready
+
+## Runtime Shape
+
+Current intended production shape:
+
+- same-origin web app
+- `APP_RUNTIME_ROLE=web` for the HTTP service
+- `APP_RUNTIME_ROLE=worker` for the background worker service
+- `AI_PROVIDER=builderspace`
+
+This is not the old single-process heuristic-first shape anymore.
 
 ## One Important Limitation
 
-This workstation does not currently have Docker installed in the active shell, so I could not do a local `docker build` verification before deployment.
+This workstation does not currently have Docker installed in the active shell, so local `docker build` verification was not completed here.
 
-That does not block Builder Space deployment, but it means the first real image build will happen on the platform.
+That does not block Builder Space deployment, but it means the first real image build may still happen on the platform.
 
 ## Recommended Deploy Order
 
-1. Keep using the temporary webhook URL only for smoke testing.
-2. Push this repo to a public GitHub repo.
-3. Deploy the repo to Builder Space.
-4. Wait for the first successful deploy.
-5. Replace the temporary LINE webhook URL with the Builder Space URL.
-6. Then create the LIFF app and point it to the deployed URL.
+1. Confirm the canonical public app URL you want to use.
+2. Deploy the repo to Builder Space as the web service.
+3. Deploy the same repo/image again as the worker service if the platform supports multiple long-running services.
+4. Wait for the first healthy deploys.
+5. Point the LINE webhook URL to the deployed web service.
+6. Point the LIFF endpoint URL to the deployed web root.
+7. Run smoke checks on LINE and LIFF.
 
 ## Env Vars To Set In Builder Space
 
@@ -32,18 +51,21 @@ Set these in the deployment environment:
 ```env
 APP_NAME=LINE LIFF Calorie Helper
 ENVIRONMENT=production
+APP_BASE_URL=https://your-app-domain
+APP_RUNTIME_ROLE=web
+CORS_ALLOWED_ORIGINS=https://your-app-domain
 
 SUPABASE_DB_URL=postgresql+psycopg://...
-SUPABASE_URL=https://suqmwspfbnrrvnsnqegs.supabase.co
+SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=sb_secret_...
 SUPABASE_STORAGE_BUCKET=meal-attachments
 SUPABASE_SIGNED_URL_TTL_SECONDS=3600
 
-AI_PROVIDER=heuristic
+AI_PROVIDER=builderspace
 AI_BUILDER_BASE_URL=https://space.ai-builders.com/backend/v1
-AI_BUILDER_TOKEN=
+AI_BUILDER_TOKEN=...
 BUILDERSPACE_CHAT_MODEL=supermind-agent-v1
 BUILDERSPACE_VISION_MODEL=supermind-agent-v1
 BUILDERSPACE_TRANSCRIPTION_LANG=zh-TW
@@ -52,40 +74,42 @@ DEFAULT_DAILY_CALORIE_TARGET=1800
 DEFAULT_USER_ID=demo-user
 ALLOWLIST_LINE_USER_ID=
 
-LINE_CHANNEL_ID=2009525591
+LINE_CHANNEL_ID=...
 LINE_CHANNEL_SECRET=...
 LINE_CHANNEL_ACCESS_TOKEN=...
-LIFF_CHANNEL_ID=
+LIFF_CHANNEL_ID=...
+GOOGLE_PLACES_API_KEY=...
 ```
 
-## Recommended v1 Values
+For the worker deployment, use the same env set except:
 
-- Keep `AI_PROVIDER=heuristic` for the very first deploy.
-- Only switch to `AI_PROVIDER=builderspace` after the app is stably reachable.
-- Leave `ALLOWLIST_LINE_USER_ID` empty only if you are okay with anyone who finds the webhook or LIFF opening it.
-- For self-use v1, set `ALLOWLIST_LINE_USER_ID` after you know your own LINE user ID.
+```env
+APP_RUNTIME_ROLE=worker
+```
 
-## What To Click In Builder Space
+## Runtime Notes
 
-1. Create a new deployment from your GitHub repo.
-2. Keep the build context at repo root.
-3. Use the root `Dockerfile`.
-4. Do not create a second service for frontend.
-5. Set the env vars above.
-6. Deploy.
+- Production readiness now assumes `AI_PROVIDER=builderspace`.
+- Do not create a separate frontend service under the current same-origin topology.
+- If the platform cannot run a second long-lived service for the worker, record that gap explicitly in `docs/operator-runtime-registry.md`.
+- Treat `ALLOWLIST_LINE_USER_ID` as an operator privacy control, not as a substitute for proper auth decisions.
 
 ## What Success Looks Like
 
 After deploy, these should work:
 
-- `GET /health`
+- `GET /healthz`
+- `GET /readyz`
 - `GET /api/day-summary`
 - `GET /`
 
-And after you swap LINE webhook URL:
+And after you swap LINE webhook and LIFF URLs:
 
-- text messages should create intake drafts
-- image and audio messages should upload into Supabase Storage
+- text messages create intake drafts
+- image and audio messages upload into Supabase Storage
+- LIFF Today loads
+- LIFF Today video upload creates a video intake draft or log
+- worker processes async search/video jobs
 
 ## After Deploy
 
@@ -98,13 +122,13 @@ https://your-builder-space-domain/webhooks/line
 Then verify:
 
 1. `weight 72.4`
-2. `雞胸便當加半碗飯`
+2. one plain text meal message
 3. one image message
+4. one audio message
+5. one LIFF Today video upload
 
-## Next Step After Backend Deploy
+## Notes
 
-Create the LIFF app under the LINE Login channel and point its endpoint URL to:
-
-```text
-https://your-builder-space-domain/
-```
+- `/webhooks/line` is the production ingress.
+- `/webhooks/line/_legacy_inline` is not the primary production path.
+- Before public launch, rotate any BuilderSpace or Google Maps credentials that were exposed in chat or local `.env` history.

@@ -59,10 +59,11 @@ SUPABASE_SIGNED_URL_TTL_SECONDS=3600
 python -m uvicorn backend.app.main:app --reload
 ```
 
-2. Check the health endpoint:
+2. Check the liveness/readiness endpoints:
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8000/healthz
+curl http://localhost:8000/readyz
 ```
 
 3. Upload a test attachment:
@@ -80,6 +81,7 @@ curl -X POST http://localhost:8000/api/attachments ^
 
 ## Notes
 
-- If `SUPABASE_DB_URL` is missing, the backend falls back to local SQLite.
-- If `SUPABASE_SERVICE_ROLE_KEY` is missing, Storage uploads fall back to local disk.
+- If `SUPABASE_DB_URL` is missing, the backend falls back to local SQLite in development-style environments.
+- If `SUPABASE_SERVICE_ROLE_KEY` is missing, Storage uploads fall back to local disk in development-style environments.
+- Production readiness now expects proper Supabase env to be present.
 - Because live keys were pasted into chat, rotate them after setup is stable.

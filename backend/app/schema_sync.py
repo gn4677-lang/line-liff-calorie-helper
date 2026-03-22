@@ -51,6 +51,31 @@ def ensure_runtime_schema(engine) -> None:
     if has_table("foods"):
         add_if_missing("foods", "store_context", f"{json_type} DEFAULT '{{}}'")
 
+    if has_table("search_jobs"):
+        add_if_missing("search_jobs", "claimed_at", timestamp_type)
+        add_if_missing("search_jobs", "lease_expires_at", timestamp_type)
+        add_if_missing("search_jobs", "claim_token", "VARCHAR(36)")
+        add_if_missing("search_jobs", "started_at", timestamp_type)
+        add_if_missing("search_jobs", "finished_at", timestamp_type)
+
+    if has_table("inbound_events"):
+        add_if_missing("inbound_events", "reply_token", "VARCHAR(255)")
+        add_if_missing("inbound_events", "trace_id", "VARCHAR(36)")
+        add_if_missing("inbound_events", "attempt_count", "INTEGER DEFAULT 0")
+        add_if_missing("inbound_events", "claimed_at", timestamp_type)
+        add_if_missing("inbound_events", "lease_expires_at", timestamp_type)
+        add_if_missing("inbound_events", "claim_token", "VARCHAR(36)")
+        add_if_missing("inbound_events", "last_error", "TEXT DEFAULT ''")
+        add_if_missing("inbound_events", "processed_at", timestamp_type)
+
+    if has_table("conversation_traces"):
+        add_if_missing("conversation_traces", "is_canary", "BOOLEAN DEFAULT 0")
+        add_if_missing("conversation_traces", "traffic_class", "VARCHAR(40) DEFAULT 'standard'")
+
+    if has_table("task_runs"):
+        add_if_missing("task_runs", "is_canary", "BOOLEAN DEFAULT 0")
+        add_if_missing("task_runs", "traffic_class", "VARCHAR(40) DEFAULT 'standard'")
+
     with engine.begin() as connection:
         if has_table("meal_drafts"):
             connection.execute(text("UPDATE meal_drafts SET meal_session_id = id WHERE meal_session_id IS NULL"))

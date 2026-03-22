@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { adminApi, clearStoredAdminToken } from '../adminApi'
 import type {
   AdminSession,
@@ -13,6 +13,7 @@ import QualityTrendCharts from '../components/QualityTrendCharts'
 import TaskHealthTable from '../components/TaskHealthTable'
 import RecommendationHealthPanel from '../components/RecommendationHealthPanel'
 import UsagePanel from '../components/UsagePanel'
+import EvalPanel from '../components/EvalPanel'
 import MemoryDigestPanel from '../components/MemoryDigestPanel'
 import OperationalErrorsPanel from '../components/OperationalErrorsPanel'
 import AlertsPanel from '../components/AlertsPanel'
@@ -34,6 +35,8 @@ type TraceFilterKey =
   | 'status'
   | 'provider_name'
   | 'model_name'
+  | 'execution_phase'
+  | 'ingress_mode'
   | 'route_policy'
   | 'llm_cache'
   | 'has_error'
@@ -49,6 +52,8 @@ const DEFAULT_FILTERS: TraceFilters = {
   status: '',
   provider_name: '',
   model_name: '',
+  execution_phase: '',
+  ingress_mode: '',
   route_policy: '',
   llm_cache: '',
   has_error: '',
@@ -80,7 +85,7 @@ export default function ObservabilityDashboardPage({ token, session, onSessionIn
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  async function withAuth<T>(fn: () => Promise<T>): Promise<T | null> {
+  const withAuth = useCallback(async <T,>(fn: () => Promise<T>): Promise<T | null> => {
     try {
       return await fn()
     } catch (err) {
@@ -91,9 +96,9 @@ export default function ObservabilityDashboardPage({ token, session, onSessionIn
       }
       throw err
     }
-  }
+  }, [onSessionInvalid])
 
-  async function refreshDashboard() {
+  const refreshDashboard = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -116,9 +121,9 @@ export default function ObservabilityDashboardPage({ token, session, onSessionIn
     } finally {
       setLoading(false)
     }
-  }
+  }, [token, trendDays, windowHours, withAuth])
 
-  async function refreshTraces(offset = traceOffset, filters = traceFilters) {
+  const refreshTraces = useCallback(async (offset = traceOffset, filters = traceFilters) => {
     try {
       const response = await withAuth(() =>
         adminApi<{ items: TraceListItem[]; total: number; limit: number; offset: number }>(
@@ -133,15 +138,15 @@ export default function ObservabilityDashboardPage({ token, session, onSessionIn
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load traces.')
     }
-  }
+  }, [token, traceFilters, traceOffset, withAuth])
 
   useEffect(() => {
     void refreshDashboard()
-  }, [windowHours, trendDays])
+  }, [refreshDashboard])
 
   useEffect(() => {
     void refreshTraces(0, traceFilters)
-  }, [traceFilters])
+  }, [refreshTraces, traceFilters])
 
   async function openTrace(traceId: string) {
     try {
@@ -206,6 +211,8 @@ export default function ObservabilityDashboardPage({ token, session, onSessionIn
         { key: 'status', label: 'Status' },
         { key: 'provider_name', label: 'Provider' },
         { key: 'model_name', label: 'Model' },
+        { key: 'execution_phase', label: 'Execution Phase' },
+        { key: 'ingress_mode', label: 'Ingress Mode' },
         { key: 'route_policy', label: 'Route Policy' },
         { key: 'llm_cache', label: 'LLM Cache' },
         { key: 'has_error', label: 'Has Error' },
@@ -253,6 +260,7 @@ export default function ObservabilityDashboardPage({ token, session, onSessionIn
             <QualityTrendCharts trends={dashboard.quality_trends} />
             <TaskHealthTable rows={dashboard.task_health} />
             <UsagePanel usage={dashboard.usage_panels} />
+            <EvalPanel evalPanels={dashboard.eval_panels} />
             <RecommendationHealthPanel product={dashboard.product_panels} />
             <MemoryDigestPanel memory={dashboard.memory_panels} />
             <OperationalErrorsPanel operational={dashboard.operational_panels} />

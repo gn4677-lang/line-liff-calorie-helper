@@ -376,9 +376,36 @@ class SearchJob(Base):
     request_payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     result_payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     suggested_update: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    claim_token: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     notification_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class InboundEvent(Base):
+    __tablename__ = "inbound_events"
+    __table_args__ = (UniqueConstraint("source", "external_event_id", name="uq_inbound_event_source_external"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    source: Mapped[str] = mapped_column(String(40), index=True)
+    external_event_id: Mapped[str] = mapped_column(String(160), index=True)
+    line_user_id: Mapped[str] = mapped_column(String(128), index=True)
+    reply_token: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    claim_token: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    last_error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Notification(Base):
@@ -407,6 +434,8 @@ class ConversationTrace(Base):
     message_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     reply_to_trace_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     is_system_initiated: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_canary: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    traffic_class: Mapped[str] = mapped_column(String(40), default="standard", index=True)
     task_family: Mapped[str] = mapped_column(String(60), default="unknown", index=True)
     task_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     source_mode: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
@@ -421,6 +450,8 @@ class TaskRun(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     trace_id: Mapped[str] = mapped_column(String(36), index=True)
     user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    is_canary: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    traffic_class: Mapped[str] = mapped_column(String(40), default="standard", index=True)
     task_family: Mapped[str] = mapped_column(String(60), index=True)
     route_layer_1: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     route_layer_2: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)

@@ -1,0 +1,24 @@
+:root {
+  /* === 基礎間距 (4px base) === */
+  --space-1: 0.25rem;   /* 4px */
+  --space-2: 0.5rem;    /* 8px */
+  --space-3: 0.75rem;   /* 12px */
+  --space-4: 1rem;      /* 16px */
+  --space-5: 1.25rem;   /* 20px */
+  --space-6: 1.5rem;    /* 24px */
+  --space-8: 2rem;      /* 32px */
+  
+  /* === 元件專用間距 === */
+  --page-padding: 1rem;           /* 頁面左右邊距 */
+  --card-padding: 1rem;           /* 卡片內距 */
+  --card-gap: 0.75rem;            /* 卡片間距 */
+  --element-gap: 0.5rem;          /* 元素間距 */
+  --touch-target: 2.75rem;        /* 44px 最小觸控區域 */
+  
+  /* === 圓角規模 === */
+  --radius-sm: 0.5rem;    /* 8px - 小按鈕、input */
+  --radius-md: 0.75rem;   /* 12px - 卡片 */
+  --radius-lg: 1rem;      /* 16px - 大卡片 */
+  --radius-xl: 1.25rem;   /* 20px - 浮層 */
+  --radius-full: 9999px;  /* pill、chips */
+}

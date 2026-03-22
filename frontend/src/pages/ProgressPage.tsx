@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '../AppContext'
 import { api } from '../api'
 import { FullScreenSheet } from '../components/Sheets'
@@ -147,7 +147,7 @@ function ActivitySheet({
   selectedDate: string
   onSaved: (summary: Summary) => Promise<void>
 }) {
-  const { auth } = useApp()
+  const { auth, showToast } = useApp()
   const [form, setForm] = useState({ label: '', estimated_burn_kcal: '', duration_minutes: '' })
   const [saving, setSaving] = useState(false)
 
@@ -170,7 +170,10 @@ function ActivitySheet({
       )
       setForm({ label: '', estimated_burn_kcal: '', duration_minutes: '' })
       await onSaved(data.summary)
+      showToast(`已記錄活動 ${form.label}`, 'success')
       onClose()
+    } catch {
+      showToast('儲存失敗，請確認網路連線後重試', 'error')
     } finally {
       setSaving(false)
     }
@@ -233,6 +236,7 @@ function MealEventSheet({
   planEvents: PlanEvent[]
   onCreate: (draft: { event_date: string; meal_type: 'breakfast' | 'lunch' | 'dinner' | 'snack'; title: string; expected_kcal?: number; notes?: string }) => Promise<void>
 }) {
+  const { showToast } = useApp()
   const [form, setForm] = useState({
     event_date: new Date().toISOString().slice(0, 10),
     meal_type: 'dinner' as const,
@@ -260,7 +264,10 @@ function MealEventSheet({
         expected_kcal: '',
         notes: '',
       })
+      showToast('已預記錄大餐', 'success')
       onClose()
+    } catch {
+      showToast('儲存失敗，請確認網路連線後重試', 'error')
     } finally {
       setSaving(false)
     }
@@ -430,38 +437,36 @@ function GoalSheet({
   bodyGoal: BodyGoal | null
   onSaved: (bodyGoal: BodyGoal) => Promise<void>
 }) {
-  const { auth } = useApp()
+  const { auth, showToast } = useApp()
   const [showAdvanced, setShowAdvanced] = useState(false)
-  const [form, setForm] = useState({
+  const formSeed = useMemo(() => ({
     target_weight_kg: bodyGoal?.target_weight_kg != null ? String(bodyGoal.target_weight_kg) : '',
     estimated_tdee_kcal: bodyGoal?.estimated_tdee_kcal != null ? String(bodyGoal.estimated_tdee_kcal) : '',
     default_daily_deficit_kcal: bodyGoal?.default_daily_deficit_kcal != null ? String(bodyGoal.default_daily_deficit_kcal) : '',
-  })
-
-  useEffect(() => {
-    setForm({
-      target_weight_kg: bodyGoal?.target_weight_kg != null ? String(bodyGoal.target_weight_kg) : '',
-      estimated_tdee_kcal: bodyGoal?.estimated_tdee_kcal != null ? String(bodyGoal.estimated_tdee_kcal) : '',
-      default_daily_deficit_kcal: bodyGoal?.default_daily_deficit_kcal != null ? String(bodyGoal.default_daily_deficit_kcal) : '',
-    })
-  }, [bodyGoal, isOpen])
+  }), [bodyGoal])
+  const [form, setForm] = useState(formSeed)
 
   async function save() {
     if (auth.status !== 'ready') return
-    const data = await api<{ payload: { body_goal: BodyGoal } }>(
-      '/api/body-goal',
-      auth.headers,
-      {
-        method: 'PATCH',
-        body: JSON.stringify({
-          target_weight_kg: form.target_weight_kg ? Number(form.target_weight_kg) : null,
-          estimated_tdee_kcal: showAdvanced && form.estimated_tdee_kcal ? Number(form.estimated_tdee_kcal) : undefined,
-          default_daily_deficit_kcal: showAdvanced && form.default_daily_deficit_kcal ? Number(form.default_daily_deficit_kcal) : undefined,
-        }),
-      },
-    )
-    await onSaved(data.payload.body_goal)
-    onClose()
+    try {
+      const data = await api<{ payload: { body_goal: BodyGoal } }>(
+        '/api/body-goal',
+        auth.headers,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            target_weight_kg: form.target_weight_kg ? Number(form.target_weight_kg) : null,
+            estimated_tdee_kcal: showAdvanced && form.estimated_tdee_kcal ? Number(form.estimated_tdee_kcal) : undefined,
+            default_daily_deficit_kcal: showAdvanced && form.default_daily_deficit_kcal ? Number(form.default_daily_deficit_kcal) : undefined,
+          }),
+        },
+      )
+      await onSaved(data.payload.body_goal)
+      showToast('目標已更新', 'success')
+      onClose()
+    } catch {
+      showToast('儲存失敗，請確認網路連線後重試', 'error')
+    }
   }
 
   return (
@@ -502,7 +507,7 @@ function WeightSheet({
   latestWeight: number | null
   onSaved: () => Promise<void>
 }) {
-  const { auth, selectedDate } = useApp()
+  const { auth, selectedDate, showToast } = useApp()
   const [weight, setWeight] = useState(latestWeight != null ? String(latestWeight) : '')
   const [saving, setSaving] = useState(false)
 
@@ -518,7 +523,10 @@ function WeightSheet({
     try {
       await api('/api/weights', auth.headers, { method: 'POST', body: JSON.stringify({ date: selectedDate, weight: Number(weight) }) })
       await onSaved()
+      showToast(`體重已記錄 ${weight} kg`, 'success')
       onClose()
+    } catch {
+      showToast('儲存失敗，請確認網路連線後重試', 'error')
     } finally {
       setSaving(false)
     }
@@ -652,7 +660,13 @@ export default function ProgressPage() {
         </button>
       </section>
 
-      <GoalSheet isOpen={goalOpen} onClose={() => setGoalOpen(false)} bodyGoal={bodyGoal} onSaved={saveGoal} />
+      <GoalSheet
+        key={`${goalOpen}-${bodyGoal?.target_weight_kg ?? 'none'}-${bodyGoal?.estimated_tdee_kcal ?? 'none'}-${bodyGoal?.default_daily_deficit_kcal ?? 'none'}`}
+        isOpen={goalOpen}
+        onClose={() => setGoalOpen(false)}
+        bodyGoal={bodyGoal}
+        onSaved={saveGoal}
+      />
       <FullScreenSheet isOpen={insightsOpen} onClose={() => setInsightsOpen(false)} title="趨勢與分析">
         <ProgressInsights series={progressSeries} range={progressRange} onChangeRange={(range) => void refreshProgressSeries(range)} />
       </FullScreenSheet>

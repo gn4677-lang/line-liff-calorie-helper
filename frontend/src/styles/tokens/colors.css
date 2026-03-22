@@ -1,0 +1,44 @@
+/* 
+ * 橄欖灰色系統 - Olive Grayscale
+ * 基調：暖灰 + 橄欖綠的微妙色偏
+ */
+
+:root {
+  /* === 背景層 Background Scale === */
+  --bg-page: #F7F6F4;           /* 主背景 - 像亞麻布的白 */
+  --bg-card: #FDFDFC;           /* 卡片 - 純白帶一點暖 */
+  --bg-hover: #EFEEEC;          /* 懸停狀態 */
+  --bg-active: #E5E4E2;         /* 按下狀態 */
+  --bg-elevated: #FFFFFF;       /* 浮起元素 */
+  
+  /* === 橄欖灰強調系統 Olive Accent Scale === */
+  --olive-deep: #5C5A4E;        /* 深橄欖灰 - 主要按鈕、重點文字 */
+  --olive-medium: #8B8878;      /* 中橄欖灰 - 次要文字、邊框 */
+  --olive-light: #B5B2A4;       /* 淺橄欖灰 - 邊框、icon、disabled */
+  --olive-soft: #E8E6E0;        /* 超淺橄欖 - 背景強調、選中狀態 */
+  --olive-muted: #F2F1ED;       /* 極淺橄欖 - hover background */
+  
+  /* === 文字層級 Text Scale === */
+  --text-primary: #2D2C28;      /* 主要文字 - 暖黑 */
+  --text-secondary: #6B6960;    /* 次要文字 - 中暖灰 */
+  --text-muted: #9A9890;        /* 輔助文字 - 淺暖灰 */
+  --text-placeholder: #B8B6AE;  /* placeholder - 淺灰 */
+  --text-on-primary: #FDFDFC;   /* 在深色按鈕上的文字 */
+  
+  /* === 邊框層級 Border Scale === */
+  --border-subtle: #EFEEEC;     /* 極細分隔 */
+  --border-light: #E5E4E0;      /* 淺邊框 */
+  --border-medium: #D5D4D0;     /* 中等邊框 */
+  --border-focus: #8B8878;      /* 聚焦狀態 */
+  
+  /* === 狀態指示 Status (灰階層次) === */
+  --status-complete: #5C5A4E;   /* 完成 - 深橄欖 */
+  --status-pending: #8B8878;    /* 待處理 - 中橄欖 */
+  --status-rough: #B5B2A4;      /* 粗估 - 淺橄欖 */
+  --status-warning: #9A9890;    /* 提醒 - 中灰 */
+  
+  /* === 圖標層級 Icon Scale === */
+  --icon-primary: #5C5A4E;      /* 主要 icon */
+  --icon-secondary: #8B8878;    /* 次要 icon */
+  --icon-muted: #B5B2A4;        /* 禁用/輔助 icon */
+}

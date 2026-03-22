@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 
 @dataclass
@@ -33,6 +33,8 @@ class AiProvider(Protocol):
         clarification_count: int,
         attachments: list[dict],
         knowledge_packet: dict | None = None,
+        memory_packet: dict | None = None,
+        communication_profile: dict | None = None,
     ) -> EstimateResult: ...
 
     async def transcribe_audio(self, *, content: bytes, mime_type: str | None = None) -> str: ...
@@ -43,3 +45,14 @@ class AiProvider(Protocol):
         attachments: list[dict],
         hint: str = "",
     ) -> list[dict]: ...
+
+    async def complete_structured(
+        self,
+        *,
+        system_prompt: str,
+        user_payload: dict[str, Any],
+        max_tokens: int = 220,
+        temperature: float = 0.1,
+        model_hint: str = "chat",
+        request_options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...

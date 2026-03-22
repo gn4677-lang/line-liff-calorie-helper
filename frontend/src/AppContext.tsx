@@ -1,7 +1,9 @@
+/* eslint-disable react-refresh/only-export-components */
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import liff from '@line/liff'
 import { api } from './api'
+import { useToast, ToastContainer, type ToastType } from './components/Toast'
 import type {
   ActivityAdjustment,
   AuthState,
@@ -111,6 +113,7 @@ type AppContextValue = {
   createSavedPlace: (draft: SavedPlaceDraft) => Promise<void>
   createFavoriteStore: (draft: FavoriteStoreDraft) => Promise<void>
   createMealEvent: (draft: MealEventDraft) => Promise<void>
+  showToast: (message: string, type?: ToastType) => void
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -173,6 +176,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [compensation, setCompensation] = useState<Compensation | null>(null)
   const [message, setMessage] = useState('Preparing your day...')
   const [loading, setLoading] = useState(false)
+  const { toasts, showToast, dismissToast } = useToast()
 
   useEffect(() => {
     async function bootstrapAuth() {
@@ -477,7 +481,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     createSavedPlace,
     createFavoriteStore,
     createMealEvent,
+    showToast,
   }
 
-  return <AppContext.Provider value={value}>{children}</AppContext.Provider>
+  return (
+    <AppContext.Provider value={value}>
+      {children}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+    </AppContext.Provider>
+  )
 }

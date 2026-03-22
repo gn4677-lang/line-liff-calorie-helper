@@ -234,6 +234,36 @@ async def push_line_message(
         response.raise_for_status()
 
 
+async def send_line_response(
+    *,
+    line_user_id: str,
+    reply_token: str | None,
+    text: str | None = None,
+    quick_reply: list[object] | None = None,
+    flex_message: dict[str, Any] | None = None,
+    messages: list[dict[str, Any]] | None = None,
+) -> str:
+    if reply_token:
+        try:
+            await reply_line_message(
+                reply_token,
+                text,
+                quick_reply=quick_reply,
+                flex_message=flex_message,
+                messages=messages,
+            )
+            return "reply"
+        except Exception:
+            pass
+    await push_line_message(
+        line_user_id,
+        text,
+        flex_message=flex_message,
+        messages=messages,
+    )
+    return "push"
+
+
 def _normalize_messages(
     *,
     text: str | None,

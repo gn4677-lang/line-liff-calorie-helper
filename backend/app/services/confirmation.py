@@ -98,6 +98,7 @@ def calculate_estimation_confidence(estimate: EstimateResult) -> float:
         penalties += 0.08
 
     confidence -= penalties
+    confidence += float(slots.get("llm_confidence_delta") or 0.0)
     return max(0.15, min(round(confidence, 2), 0.95))
 
 
@@ -146,13 +147,17 @@ def decide_confirmation(
     clarification_used: int,
     requested_force_confirm: bool = False,
 ) -> ConfirmationDecision:
+    slots = estimate.evidence_slots or {}
     estimation_confidence = calculate_estimation_confidence(estimate)
     confirmation_calibration = calculate_confirmation_calibration(db, user, target_date=target_date)
     adjusted_gate = 0.78 + max(0.0, confirmation_calibration - 1.0) * 0.12
     budget = get_question_budget(mode)
-    primary_uncertainties = build_primary_uncertainties(estimate.missing_slots)
+    primary_uncertainties = list(slots.get("llm_primary_uncertainties") or [])[:2] or build_primary_uncertainties(estimate.missing_slots)
     high_impact_missing = [slot for slot in estimate.missing_slots if slot in HIGH_IMPACT_SLOTS]
-    source_mode = str((estimate.evidence_slots or {}).get("source_mode") or "").lower()
+    source_mode = str(slots.get("source_mode") or "").lower()
+    llm_auto_record_ok = bool(slots.get("llm_auto_record_ok")) if slots.get("llm_auto_record_ok") is not None else None
+    llm_clarification_mode = str(slots.get("llm_clarification_mode") or "").strip() or None
+    llm_generic_estimate_ok = bool(slots.get("llm_generic_estimate_ok")) if slots.get("llm_generic_estimate_ok") is not None else None
 
     if requested_force_confirm:
         return ConfirmationDecision(
@@ -182,6 +187,20 @@ def decide_confirmation(
             needs_confirmation=False,
         )
 
+    if llm_auto_record_ok and estimation_confidence >= adjusted_gate - 0.04 and not high_impact_missing:
+        return ConfirmationDecision(
+            confirmation_mode="auto_recordable",
+            estimation_confidence=estimation_confidence,
+            confirmation_calibration=confirmation_calibration,
+            primary_uncertainties=primary_uncertainties,
+            clarification_kind=None,
+            answer_mode=None,
+            answer_options=[],
+            followup_question=None,
+            stop_reason="llm_review_greenlight",
+            needs_confirmation=False,
+        )
+
     if source_mode in {"voice", "audio"} and estimate.confidence >= 0.82 and not high_impact_missing:
         return ConfirmationDecision(
             confirmation_mode="auto_recordable",
@@ -194,6 +213,20 @@ def decide_confirmation(
             followup_question=None,
             stop_reason="high_confidence_voice_shortcut",
             needs_confirmation=False,
+        )
+
+    if llm_clarification_mode == "generic_estimate_fallback" and llm_generic_estimate_ok and estimate.estimate_kcal > 0:
+        return ConfirmationDecision(
+            confirmation_mode="needs_confirmation",
+            estimation_confidence=estimation_confidence,
+            confirmation_calibration=confirmation_calibration,
+            primary_uncertainties=primary_uncertainties,
+            clarification_kind=None,
+            answer_mode=None,
+            answer_options=[],
+            followup_question="資訊已經夠我先用一般份量估這餐；如果你想更準，再補一句我就幫你改。",
+            stop_reason="llm_generic_estimate_fallback",
+            needs_confirmation=True,
         )
 
     if clarification_used >= budget:
@@ -210,7 +243,7 @@ def decide_confirmation(
             needs_confirmation=True,
         )
 
-    slot = choose_next_question_slot(estimate.missing_slots)
+    slot = choose_next_question_slot(estimate.missing_slots, preferred_slot=slots.get("llm_suggested_slot"))
     if not slot:
         return ConfirmationDecision(
             confirmation_mode="needs_confirmation",
@@ -227,7 +260,7 @@ def decide_confirmation(
 
     answer_mode = None
     answer_options: list[str] = []
-    if slot in {"portion", "rice_portion"}:
+    if llm_clarification_mode == "comparison_mode" or slot in {"portion", "rice_portion"}:
         answer_mode = "chips_first_with_text_fallback"
         answer_options = build_portion_answer_options(db, user)
 
@@ -239,7 +272,7 @@ def decide_confirmation(
         clarification_kind=slot,
         answer_mode=answer_mode,
         answer_options=answer_options,
-        followup_question=QUESTION_TEMPLATES.get(slot, estimate.followup_question),
+        followup_question=str(slots.get("llm_followup_question") or QUESTION_TEMPLATES.get(slot, estimate.followup_question)),
         stop_reason=None,
         needs_confirmation=False,
     )
@@ -262,7 +295,9 @@ def build_primary_uncertainties(missing_slots: list[str]) -> list[str]:
     return [labels.get(slot, slot) for slot in missing_slots[:2]]
 
 
-def choose_next_question_slot(missing_slots: list[str]) -> str | None:
+def choose_next_question_slot(missing_slots: list[str], *, preferred_slot: str | None = None) -> str | None:
+    if preferred_slot and preferred_slot in missing_slots:
+        return preferred_slot
     ordered = [
         "main_items",
         "portion",

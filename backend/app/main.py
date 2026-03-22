@@ -3,21 +3,21 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 import logging
-import sys
 import threading
 import uuid
 
 from fastapi import FastAPI, Request
+from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
 from .api.observability_routes import router as observability_router
 from .api.routes import router
-from .config import settings
+from .config import cors_origin_list, production_config_errors, runtime_role, settings
 from .database import Base, engine, get_session_factory
 from .schema_sync import ensure_runtime_schema
-from .services.background_jobs import start_background_worker, stop_background_worker
 from .services.knowledge import prewarm_knowledge_layer
 
 
@@ -44,27 +44,26 @@ def _startup_engine(app: FastAPI):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    config_errors = production_config_errors()
+    if config_errors:
+        raise RuntimeError(f"Missing production configuration: {', '.join(config_errors)}")
+
     startup_engine = _startup_engine(app)
     Base.metadata.create_all(bind=startup_engine)
     ensure_runtime_schema(startup_engine)
     threading.Thread(target=_prewarm_knowledge_background, daemon=True).start()
 
-    should_run_background_worker = "pytest" not in sys.modules
-    if should_run_background_worker:
-        start_background_worker()
-
     try:
         yield
     finally:
-        if should_run_background_worker:
-            stop_background_worker()
+        pass
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origin_list() or (["*"] if settings.environment != "production" else []),
+    allow_credentials=bool(cors_origin_list()) or settings.environment != "production",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -89,7 +88,48 @@ if frontend_dist.exists():
 
     @app.get("/{full_path:path}")
     def spa_entry(full_path: str):
+        if full_path == "healthz":
+            return JSONResponse({"status": "ok", "role": runtime_role()})
+        if full_path == "readyz":
+            errors = _readiness_errors()
+            if errors:
+                return JSONResponse(
+                    {"detail": {"status": "not_ready", "errors": errors}, "role": runtime_role()},
+                    status_code=503,
+                )
+            return JSONResponse({"status": "ready", "role": runtime_role()})
         requested = frontend_dist / full_path
         if full_path and requested.exists() and requested.is_file():
             return FileResponse(requested)
         return FileResponse(frontend_dist / "index.html")
+
+
+def _readiness_errors() -> list[str]:
+    errors = production_config_errors()
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception as exc:
+        errors.append(f"database:{type(exc).__name__}")
+
+    if settings.environment == "production":
+        if not settings.supabase_url:
+            errors.append("SUPABASE_URL")
+        if not settings.supabase_service_role_key:
+            errors.append("SUPABASE_SERVICE_ROLE_KEY")
+        if settings.ai_provider == "builderspace" and not settings.ai_builder_token:
+            errors.append("AI_BUILDER_TOKEN")
+    return errors
+
+
+@app.get("/healthz")
+def healthz() -> dict[str, str]:
+    return {"status": "ok", "role": runtime_role()}
+
+
+@app.get("/readyz")
+def readyz() -> dict[str, object]:
+    errors = _readiness_errors()
+    if errors:
+        raise HTTPException(status_code=503, detail={"status": "not_ready", "errors": errors})
+    return {"status": "ready", "role": runtime_role()}

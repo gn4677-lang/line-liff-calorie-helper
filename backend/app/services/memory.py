@@ -9,6 +9,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from ..models import Food, MealDraft, MealLog, MemoryHypothesis, MemorySignal, Preference, RecommendationProfile, ReportingBias, User, utcnow
+from ..providers.factory import get_ai_provider
 from ..schemas import (
     MemoryHypothesisResponse,
     MemoryProfileResponse,
@@ -18,6 +19,8 @@ from ..schemas import (
     PreferenceCorrectionRequest,
     PreferenceResponse,
 )
+from .llm_support import _extract_provider_usage, complete_structured_sync, synthesize_memory_hypotheses_sync
+from .observability import finish_task_run, provider_descriptor, start_task_run
 
 
 SOURCE_PRIORITY = {
@@ -268,6 +271,7 @@ def build_memory_profile(db: Session, user: User) -> MemoryProfileResponse:
 
 def build_intake_memory_packet(db: Session, user: User, draft: MealDraft | None = None) -> dict[str, Any]:
     preference = get_or_create_preferences(db, user)
+    bias = db.scalar(select(ReportingBias).where(ReportingBias.user_id == user.id))
     signals = list(
         db.scalars(
             select(MemorySignal)
@@ -304,6 +308,13 @@ def build_intake_memory_packet(db: Session, user: User, draft: MealDraft | None 
             }
             for log in recent_logs
         ],
+        "reporting_bias": {
+            "underreport_score": round(bias.underreport_score if bias else 0.0, 3),
+            "overreport_score": round(bias.overreport_score if bias else 0.0, 3),
+            "vagueness_score": round(bias.vagueness_score if bias else 0.0, 3),
+            "missing_detail_score": round(bias.missing_detail_score if bias else 0.0, 3),
+            "log_confidence_score": round(bias.log_confidence_score if bias else 1.0, 3),
+        },
     }
 
 
@@ -403,8 +414,9 @@ def build_planning_memory_packet(db: Session, user: User) -> dict[str, Any]:
     }
 
 
-def synthesize_hypotheses(db: Session, user: User, *, force_user_stated: bool = False) -> None:
+def synthesize_hypotheses(db: Session, user: User, *, force_user_stated: bool = False, trace_id: str | None = None) -> None:
     preference = get_or_create_preferences(db, user)
+    bias = db.scalar(select(ReportingBias).where(ReportingBias.user_id == user.id))
     signals = list(db.scalars(select(MemorySignal).where(MemorySignal.user_id == user.id)))
     signal_map = {signal.canonical_label: signal for signal in signals}
 
@@ -520,8 +532,136 @@ def synthesize_hypotheses(db: Session, user: User, *, force_user_stated: bool = 
         )
         active_labels.add(hypothesis_label)
 
+    # Wrap LLM call in TaskRun for observability
+    import uuid
+
+    task_trace_id = trace_id or str(uuid.uuid4())
+    ai_provider = get_ai_provider()
+    provider_name, model_name = provider_descriptor(ai_provider, task_family="memory_hypothesis_synthesis", source_mode="background")
+
+    task_run_id = start_task_run(
+        db,
+        trace_id=task_trace_id,
+        user_id=user.id,
+        task_family="memory_hypothesis_synthesis",
+        provider_name=provider_name,
+        model_name=model_name,
+        result_summary={"execution_phase": "background_job", "ingress_mode": "async_job"},
+    )
+
+    try:
+        response = complete_structured_sync(
+            ai_provider,
+            system_prompt=(
+                "Synthesize up to 3 cautious food-behavior hypotheses from bounded user evidence. "
+                "Do not invent certainty. "
+                "Reply with JSON only using this schema: "
+                "{\"hypotheses\":[{\"dimension\":\"\",\"label\":\"\",\"statement\":\"\","
+                "\"confidence\":0.0,\"status\":\"tentative\",\"supporting_signals\":[]}]}."
+            ),
+            user_payload={
+                "user_preferences": preference_to_response(preference).model_dump(),
+                "reporting_bias": {
+                    "underreport_score": round(bias.underreport_score if bias else 0.0, 3),
+                    "overreport_score": round(bias.overreport_score if bias else 0.0, 3),
+                    "vagueness_score": round(bias.vagueness_score if bias else 0.0, 3),
+                    "missing_detail_score": round(bias.missing_detail_score if bias else 0.0, 3),
+                    "log_confidence_score": round(bias.log_confidence_score if bias else 1.0, 3),
+                },
+                "signals": [
+                    {
+                        "canonical_label": signal.canonical_label,
+                        "dimension": signal.dimension,
+                        "source": signal.source,
+                        "confidence": signal.confidence,
+                        "status": signal.status,
+                    }
+                    for signal in signals[:12]
+                ],
+                "recent_logs": [
+                    {
+                        "meal_type": log.meal_type,
+                        "description_raw": log.description_raw,
+                        "parsed_items": [item.get("name") for item in (log.parsed_items or [])[:4] if isinstance(item, dict) and item.get("name")],
+                    }
+                    for log in recent_logs[:12]
+                ],
+                "existing_hypotheses": [
+                    {
+                        "dimension": hypothesis.dimension,
+                        "label": hypothesis.label,
+                        "statement": hypothesis.statement,
+                        "source": hypothesis.source,
+                        "confidence": hypothesis.confidence,
+                    }
+                    for hypothesis in db.scalars(select(MemoryHypothesis).where(MemoryHypothesis.user_id == user.id)).all()[:10]
+                ],
+            },
+            max_tokens=320,
+            temperature=0.1,
+            model_hint="frontier",
+        )
+        llm_usage = _extract_provider_usage(response)
+        hypotheses: list[dict[str, Any]] = []
+        for item in response.get("hypotheses", []):
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or "").strip()[:120]
+            statement = str(item.get("statement") or "").strip()[:400]
+            dimension = str(item.get("dimension") or "").strip()[:60]
+            if not label or not statement or not dimension:
+                continue
+            status = str(item.get("status") or "tentative").strip().lower()
+            if status not in {"tentative", "active"}:
+                status = "tentative"
+            supporting_signals = [
+                str(signal).strip()
+                for signal in item.get("supporting_signals", [])
+                if str(signal).strip()
+            ][:4]
+            hypotheses.append(
+                {
+                    "dimension": dimension,
+                    "label": label,
+                    "statement": statement,
+                    "confidence": max(0.45, min(float(item.get("confidence") or 0.6), 0.92)),
+                    "status": status,
+                    "supporting_signals": supporting_signals,
+                }
+            )
+        llm_hypotheses = hypotheses[:3]
+        finish_task_run(db, task_run_id, status="success", result_summary={"llm_usage": llm_usage})
+    except Exception as exc:
+        finish_task_run(db, task_run_id, status="failed", error_type=type(exc).__name__)
+        raise
+    llm_labels: set[str] = set()
+    for item in llm_hypotheses:
+        supporting_signal_ids = [
+            signal_map[label].id
+            for label in item.get("supporting_signals", [])
+            if label in signal_map
+        ]
+        _upsert_hypothesis(
+            db,
+            user.id,
+            item["dimension"],
+            item["label"],
+            item["statement"],
+            "model_hypothesis",
+            float(item["confidence"]),
+            supporting_signal_ids,
+            status=item.get("status", "tentative"),
+        )
+        active_labels.add(item["label"])
+        llm_labels.add(item["label"])
+
     existing = list(db.scalars(select(MemoryHypothesis).where(MemoryHypothesis.user_id == user.id)))
     for hypothesis in existing:
+        if hypothesis.source == "model_hypothesis" and hypothesis.label not in llm_labels:
+            if hypothesis.status != "stale":
+                hypothesis.status = "stale"
+                db.add(hypothesis)
+            continue
         if hypothesis.label not in active_labels and hypothesis.source != "user_corrected":
             if hypothesis.status != "stale":
                 hypothesis.status = "stale"

@@ -24,6 +24,7 @@ from ..schemas import (
 from ..services.admin_auth import create_admin_session, require_admin_session, revoke_admin_session, validate_admin_passcode
 from ..services.knowledge import refresh_knowledge_layer
 from ..services.observability_console import (
+    build_eval_export,
     build_observability_dashboard,
     collect_default_metrics,
     ensure_default_alert_rules,
@@ -105,6 +106,20 @@ def observability_metrics(
     return StandardResponse(
         coach_message="Observability metrics loaded.",
         payload={"metrics": metrics, "window_hours": window_hours},
+    )
+
+
+@router.get(f"{settings.api_prefix}/observability/eval-export", response_model=StandardResponse)
+def observability_eval_export(
+    window_hours: int = Query(default=168, ge=1, le=24 * 30),
+    limit: int = Query(default=200, ge=10, le=1000),
+    db: Session = Depends(get_db),
+    _admin_session=Depends(require_admin_session),
+) -> StandardResponse:
+    export = build_eval_export(db, window_hours=window_hours, limit=limit)
+    return StandardResponse(
+        coach_message="Eval export loaded.",
+        payload={"eval_export": export},
     )
 
 
@@ -225,8 +240,12 @@ def observability_traces(
     status: str | None = Query(default=None),
     provider_name: str | None = Query(default=None),
     model_name: str | None = Query(default=None),
+    execution_phase: str | None = Query(default=None),
+    ingress_mode: str | None = Query(default=None),
     route_policy: str | None = Query(default=None),
     llm_cache: str | None = Query(default=None),
+    is_canary: bool | None = Query(default=None),
+    traffic_class: str | None = Query(default=None),
     has_error: bool | None = Query(default=None),
     has_feedback: bool | None = Query(default=None),
     has_unknown_case: bool | None = Query(default=None),
@@ -243,8 +262,12 @@ def observability_traces(
         status=status,
         provider_name=provider_name,
         model_name=model_name,
+        execution_phase=execution_phase,
+        ingress_mode=ingress_mode,
         route_policy=route_policy,
         llm_cache=llm_cache,
+        is_canary=is_canary,
+        traffic_class=traffic_class,
         has_error=has_error,
         has_feedback=has_feedback,
         has_unknown_case=has_unknown_case,

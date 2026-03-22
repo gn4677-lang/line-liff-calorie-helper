@@ -1,8 +1,12 @@
 import asyncio
 
+import pytest
+
 from app.config import settings
 from app.providers.builderspace import BuilderSpaceProvider
 from app.services.knowledge import KNOWLEDGE_PACKET_VERSION, build_estimation_knowledge_packet, list_knowledge_packs
+
+pytestmark = pytest.mark.agentic
 
 
 def test_pack_registry_lists_new_structured_packs():

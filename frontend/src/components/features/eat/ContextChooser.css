@@ -1,0 +1,20 @@
+.context-chooser {
+  background-color: var(--bg-page);
+}
+
+.context-scroller {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: var(--space-1);
+}
+
+.context-scroller::-webkit-scrollbar {
+  display: none;
+}
+.context-scroller {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}

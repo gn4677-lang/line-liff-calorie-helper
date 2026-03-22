@@ -1,5 +1,26 @@
 # LINE LIFF Calorie Helper
 
+## Current Repo Status
+
+This repo currently contains two app trees on purpose:
+
+- legacy root app
+  - [backend](/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/backend)
+  - [frontend](/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/frontend)
+- new agentic rewrite mainline
+  - [agentic](/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/agentic)
+
+Short version:
+- root `backend/` and `frontend/` are the pre-agentic system and are kept for rollback/reference
+- `agentic/` is the new rewrite mainline and the future product direction
+
+If you are looking for the migration map, read:
+- [agentic/docs/legacy-vs-agentic-migration-map-2026-03-22.md](/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/agentic/docs/legacy-vs-agentic-migration-map-2026-03-22.md)
+
+Git preservation for the pre-rewrite state:
+- local tag: `pre-agentic-rewrite-2026-03-21`
+- local branch: `codex/agentic-rewrite`
+
 AI 減脂操作系統的可跑 MVP。
 
 目前這個 repo 直接提供：

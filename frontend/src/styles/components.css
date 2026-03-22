@@ -1,0 +1,169 @@
+/* === Button Component === */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-md);
+  font-weight: var(--font-medium);
+  transition: all 0.2s ease;
+  min-height: var(--touch-target);
+  padding: 0 var(--space-4);
+  cursor: pointer;
+  border: 1px solid transparent;
+  font-size: var(--text-body);
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.btn-primary {
+  background-color: var(--olive-deep);
+  color: var(--text-on-primary);
+}
+
+.btn-primary:hover {
+  background-color: rgba(92, 90, 78, 0.9); /* --olive-deep slightly transparent */
+}
+
+.btn-secondary {
+  background-color: var(--olive-soft);
+  color: var(--olive-deep);
+}
+
+.btn-secondary:hover {
+  background-color: rgba(232, 230, 224, 0.9);
+}
+
+.btn-ghost {
+  background-color: transparent;
+  color: var(--text-secondary);
+}
+
+.btn-ghost:hover {
+  background-color: var(--olive-muted);
+}
+
+.btn-outline {
+  background-color: transparent;
+  color: var(--text-primary);
+  border-color: var(--border-light);
+}
+
+.btn-outline:hover {
+  background-color: var(--olive-muted);
+}
+
+.btn-full {
+  width: 100%;
+  flex: 1;
+}
+
+/* === Chip Component === */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  font-size: var(--text-body);
+  transition: all 0.2s ease;
+  min-height: 36px;
+  white-space: nowrap;
+  cursor: pointer;
+  border: 1px solid var(--border-light);
+  background-color: transparent;
+  color: var(--text-secondary);
+}
+
+.chip:active {
+  transform: scale(0.97);
+}
+
+.chip:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.chip:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+}
+
+.chip-active {
+  background-color: var(--olive-soft);
+  border-color: var(--olive-light);
+  color: var(--olive-deep);
+}
+
+/* === Card Component === */
+.card {
+  background-color: var(--bg-card);
+  border-radius: var(--radius-lg);
+}
+
+.card-pad-none { padding: 0; }
+.card-pad-sm { padding: var(--space-3); }
+.card-pad-md { padding: var(--card-padding); }
+.card-pad-lg { padding: var(--space-5); }
+
+.card-elev-none {
+  box-shadow: var(--shadow-none);
+}
+.card-elev-card {
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--border-subtle);
+}
+.card-elev-elevated {
+  box-shadow: var(--shadow-elevated);
+  border: 1px solid var(--border-light);
+}
+.card-elev-float {
+  box-shadow: var(--shadow-float);
+  border: 1px solid var(--border-light);
+}
+
+/* === Input Component === */
+.input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.input-field {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  background-color: var(--bg-page);
+  color: var(--text-primary);
+  font-size: var(--text-body);
+  min-height: var(--touch-target);
+  font-family: inherit;
+  transition: border-color 0.2s;
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.input-field::placeholder {
+  color: var(--text-placeholder);
+}
+
+/* Utils */
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

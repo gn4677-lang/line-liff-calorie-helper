@@ -106,7 +106,7 @@ function DailyHeader({
 }
 
 function DraftInbox({ draft, onSynced }: { draft: Draft; onSynced: (summary: Summary) => Promise<void> }) {
-  const { auth, setDraft, setMessage } = useApp()
+  const { auth, setDraft, setMessage, showToast } = useApp()
   const [loading, setLoading] = useState(false)
 
   async function handleClarify(answer: string) {
@@ -122,7 +122,10 @@ function DraftInbox({ draft, onSynced }: { draft: Draft; onSynced: (summary: Sum
       setMessage(data.coach_message)
       if (data.summary) {
         await onSynced(data.summary)
+        showToast(`已澄清，今天還剩 ${data.summary.remaining_kcal} kcal`, 'success')
       }
+    } catch {
+      showToast('儲存失敗，請確認網路連線後重試', 'error')
     } finally {
       setLoading(false)
     }
@@ -140,6 +143,9 @@ function DraftInbox({ draft, onSynced }: { draft: Draft; onSynced: (summary: Sum
       setDraft(null)
       setMessage(data.coach_message)
       await onSynced(data.summary)
+      showToast(`已記錄，今天還剩 ${data.summary.remaining_kcal} kcal`, 'success')
+    } catch {
+      showToast('儲存失敗，請確認網路連線後重試', 'error')
     } finally {
       setLoading(false)
     }
@@ -370,7 +376,7 @@ function InlineEditor({
   onDone: () => void
   onSynced: (summary: Summary) => Promise<void>
 }) {
-  const { auth } = useApp()
+  const { auth, showToast } = useApp()
   const isEdit = Boolean(initialLog)
   const [form, setForm] = useState<JournalFormState>({
     description_raw: initialLog?.description_raw ?? '',
@@ -400,6 +406,7 @@ function InlineEditor({
           },
         )
         await onSynced(data.summary)
+        showToast(`已更新 ${MEAL_TYPE_LABELS[form.meal_type]}`, 'success')
       } else {
         const data = await api<{ summary: Summary }>(
           '/api/meal-logs/manual',
@@ -416,8 +423,11 @@ function InlineEditor({
           },
         )
         await onSynced(data.summary)
+        showToast(`已新增 ${MEAL_TYPE_LABELS[form.meal_type]}`, 'success')
       }
       onDone()
+    } catch {
+      showToast('儲存失敗，請確認網路連線後重試', 'error')
     } finally {
       setLoading(false)
     }
@@ -442,7 +452,10 @@ function InlineEditor({
         },
       )
       await onSynced(data.summary)
+      showToast(`已記錄 ${description}`, 'success')
       onDone()
+    } catch {
+      showToast('儲存失敗，請確認網路連線後重試', 'error')
     } finally {
       setLoading(false)
     }
@@ -458,7 +471,10 @@ function InlineEditor({
         { method: 'DELETE' },
       )
       await onSynced(data.summary)
+      showToast('已刪除記錄', 'success')
       onDone()
+    } catch {
+      showToast('刪除失敗，請稍後重試', 'error')
     } finally {
       setLoading(false)
     }

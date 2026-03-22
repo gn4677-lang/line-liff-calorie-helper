@@ -1,0 +1,10 @@
+.draft-card {
+  border-width: 2px;
+}
+
+.inline-error {
+  /* Vanilla fallback styles since Tailwind variants like red-50 might not exist globally */
+  background-color: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}

@@ -16,6 +16,15 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+.tmp_pytest/
+backend/.pytest_cache_codex/
+backend/.pytest_tmp/
+backend/.pytest_tmp*/
+agentic/*.db
+agentic/backend/.pytest_tmp*/
+agentic/backend/agentic-live-probe-*/
+runs/
+nul
 .DS_Store
 Thumbs.db
 npm-debug.log*

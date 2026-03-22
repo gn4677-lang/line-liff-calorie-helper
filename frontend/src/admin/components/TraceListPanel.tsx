@@ -46,7 +46,10 @@ export default function TraceListPanel({ traces, total, offset, limit, onOffsetC
               <td>{trace.surface}</td>
               <td>{trace.route_status}</td>
               <td>
-                <div>{trace.route_policy ?? 'n/a'}</div>
+                <div>{trace.execution_phase ?? 'n/a'} / {trace.ingress_mode ?? 'n/a'}</div>
+                <div className="text-caption text-muted">
+                  {(trace.route_policy ?? 'n/a')} / {(trace.route_target ?? 'n/a')}
+                </div>
                 <div className="text-caption text-muted">
                   {(trace.route_target ?? 'n/a')} / {(trace.provider_name ?? 'n/a')}
                 </div>

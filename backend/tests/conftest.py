@@ -69,8 +69,10 @@ def client(tmp_path: Path) -> Generator[TestClient, None, None]:
     set_session_factory_override(TestingSessionLocal)
     original_passcode = settings.observability_admin_passcode
     original_ttl = settings.observability_admin_session_ttl_hours
+    original_ai_builder_token = settings.ai_builder_token
     settings.observability_admin_passcode = "test-admin-passcode"
     settings.observability_admin_session_ttl_hours = 12
+    settings.ai_builder_token = None
 
     with TestClient(app) as test_client:
         yield test_client
@@ -79,6 +81,7 @@ def client(tmp_path: Path) -> Generator[TestClient, None, None]:
     set_session_factory_override(None)
     settings.observability_admin_passcode = original_passcode
     settings.observability_admin_session_ttl_hours = original_ttl
+    settings.ai_builder_token = original_ai_builder_token
     if hasattr(app.state, "_testing_session_factory"):
         delattr(app.state, "_testing_session_factory")
     engine.dispose()

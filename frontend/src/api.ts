@@ -8,9 +8,10 @@ export async function api<T>(
   authHeaders: Record<string, string>,
   init?: RequestInit,
 ): Promise<T> {
+  const hasJsonBody = init?.body != null && !(init.body instanceof FormData)
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(hasJsonBody ? { 'Content-Type': 'application/json' } : {}),
       ...authHeaders,
       ...(init?.headers ?? {}),
     },

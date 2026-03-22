@@ -24,11 +24,22 @@ def load_env() -> dict[str, str]:
 
 
 def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    candidates = [
-        "C:/Windows/Fonts/msjhbd.ttc" if bold else "C:/Windows/Fonts/msjh.ttc",
-        "C:/Windows/Fonts/segoeuib.ttf" if bold else "C:/Windows/Fonts/segoeui.ttf",
-        "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
-    ]
+    if bold:
+        candidates = [
+            "C:/Windows/Fonts/msjhbd.ttc",
+            "C:/Windows/Fonts/YuGothB.ttc",
+            "C:/Windows/Fonts/NotoSansTC-VF.ttf",
+            "C:/Windows/Fonts/NotoSansHK-VF.ttf",
+            "C:/Windows/Fonts/segoeuib.ttf",
+        ]
+    else:
+        candidates = [
+            "C:/Windows/Fonts/msjh.ttc",
+            "C:/Windows/Fonts/YuGothM.ttc",
+            "C:/Windows/Fonts/NotoSansTC-VF.ttf",
+            "C:/Windows/Fonts/NotoSansHK-VF.ttf",
+            "C:/Windows/Fonts/segoeui.ttf",
+        ]
     for candidate in candidates:
         path = Path(candidate)
         if path.exists():
@@ -36,33 +47,56 @@ def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFo
     return ImageFont.load_default()
 
 
+def draw_centered_text(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    text: str,
+    font: ImageFont.ImageFont,
+    fill: str,
+) -> None:
+    bbox = draw.textbbox((0, 0), text, font=font, stroke_width=1)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    x0, y0, x1, y1 = box
+    text_x = x0 + ((x1 - x0) - text_w) // 2
+    text_y = y0 + ((y1 - y0) - text_h) // 2 - 8
+    draw.text(
+        (text_x, text_y),
+        text,
+        font=font,
+        fill=fill,
+        stroke_width=1,
+        stroke_fill=fill,
+    )
+
+
 def create_image(output_path: Path) -> None:
     width, height = 2500, 843
-    image = Image.new("RGB", (width, height), "#F3EFE8")
+    image = Image.new("RGB", (width, height), "#F4F0E8")
     draw = ImageDraw.Draw(image)
 
-    title_font = load_font(92, bold=True)
+    title_font = load_font(102, bold=True)
 
     sections = [
         {
-            "title": "今日日誌",
-            "accent": "#5F8F7B",
-            "fill": "#EAF2ED",
-            "outline": "#D7E4DD",
+            "title": "熱量日誌",
+            "accent": "#668D7E",
+            "fill": "#EAF2EE",
+            "outline": "#D8E4DE",
             "icon": "journal",
         },
         {
-            "title": "吃什麼",
-            "accent": "#B88746",
-            "fill": "#F6EFE3",
-            "outline": "#E7DACA",
+            "title": "食物推薦",
+            "accent": "#A97940",
+            "fill": "#F6EFE5",
+            "outline": "#E6D9CB",
             "icon": "eat",
         },
         {
             "title": "身體策略",
-            "accent": "#6F85A6",
-            "fill": "#EDF2F8",
-            "outline": "#D8E0EC",
+            "accent": "#7086A5",
+            "fill": "#EEF2F8",
+            "outline": "#DAE1EC",
             "icon": "body",
         },
     ]
@@ -75,38 +109,57 @@ def create_image(output_path: Path) -> None:
     radius = 68
 
     def draw_icon(kind: str, x0: int, y0: int, x1: int, y1: int, color: str) -> None:
-        icon_w = 180
-        icon_h = 180
         cx = (x0 + x1) // 2
         top_y = y0 + 118
-        left = cx - icon_w // 2
-        right = cx + icon_w // 2
-        bottom = top_y + icon_h
 
         if kind == "journal":
-            draw.rounded_rectangle((left, top_y, right, bottom), radius=34, outline=color, width=10)
-            draw.line((left + 36, top_y + 58, right - 36, top_y + 58), fill=color, width=10)
-            draw.line((left + 36, top_y + 98, right - 52, top_y + 98), fill=color, width=10)
-            draw.line((left + 36, top_y + 138, right - 72, top_y + 138), fill=color, width=10)
-        elif kind == "eat":
-            draw.arc((left + 26, top_y + 74, right - 26, bottom + 18), start=200, end=340, fill=color, width=10)
-            draw.line((left + 52, bottom - 16, right - 52, bottom - 16), fill=color, width=10)
-            draw.line((right - 76, top_y + 34, right - 26, top_y + 94), fill=color, width=8)
-            draw.line((right - 98, top_y + 40, right - 48, top_y + 100), fill=color, width=8)
-            draw.arc((left + 56, top_y + 56, left + 96, top_y + 108), start=220, end=340, fill=color, width=6)
-        else:
-            draw.rounded_rectangle((left, top_y, right, bottom), radius=34, outline=color, width=10)
-            draw.line((left + 34, bottom - 40, left + 34, top_y + 44), fill=color, width=8)
-            draw.line((left + 34, bottom - 40, right - 34, bottom - 40), fill=color, width=8)
-            points = [
-                (left + 48, bottom - 60),
-                (left + 92, top_y + 108),
-                (left + 128, top_y + 128),
-                (right - 40, top_y + 64),
-            ]
-            draw.line(points, fill=color, width=10)
-            for px, py in points:
-                draw.ellipse((px - 10, py - 10, px + 10, py + 10), fill=color)
+            left = cx - 74
+            right = cx + 74
+            bottom = top_y + 148
+            draw.rounded_rectangle((left, top_y, right, bottom), radius=30, outline=color, width=10)
+            draw.line((left + 34, top_y + 48, right - 34, top_y + 48), fill=color, width=10)
+            draw.line((left + 34, top_y + 84, right - 52, top_y + 84), fill=color, width=10)
+            draw.line((left + 34, top_y + 118, right - 68, top_y + 118), fill=color, width=10)
+            return
+
+        if kind == "eat":
+            plate_cx = cx
+            plate_cy = top_y + 86
+            plate_r = 56
+            draw.ellipse(
+                (plate_cx - plate_r, plate_cy - plate_r, plate_cx + plate_r, plate_cy + plate_r),
+                outline=color,
+                width=10,
+            )
+            draw.ellipse(
+                (plate_cx - 27, plate_cy - 27, plate_cx + 27, plate_cy + 27),
+                outline=color,
+                width=8,
+            )
+            fork_x = plate_cx - 112
+            draw.line((fork_x, top_y + 24, fork_x, top_y + 156), fill=color, width=8)
+            for offset in (-14, 0, 14):
+                draw.line((fork_x + offset, top_y + 24, fork_x + offset, top_y + 68), fill=color, width=6)
+            spoon_x = plate_cx + 112
+            draw.line((spoon_x, top_y + 66, spoon_x, top_y + 156), fill=color, width=8)
+            draw.ellipse((spoon_x - 18, top_y + 18, spoon_x + 18, top_y + 68), outline=color, width=8)
+            return
+
+        left = cx - 78
+        right = cx + 78
+        bottom = top_y + 148
+        draw.rounded_rectangle((left, top_y, right, bottom), radius=28, outline=color, width=10)
+        draw.line((left + 30, bottom - 34, left + 30, top_y + 36), fill=color, width=8)
+        draw.line((left + 30, bottom - 34, right - 28, bottom - 34), fill=color, width=8)
+        points = [
+            (left + 40, bottom - 20),
+            (left + 84, top_y + 96),
+            (left + 120, top_y + 112),
+            (right - 34, top_y + 56),
+        ]
+        draw.line(points, fill=color, width=10)
+        for px, py in points:
+            draw.ellipse((px - 10, py - 10, px + 10, py + 10), fill=color)
 
     for index, section in enumerate(sections):
         x0 = outer_margin + index * (button_width + gap)
@@ -114,31 +167,12 @@ def create_image(output_path: Path) -> None:
         x1 = x0 + button_width
         y1 = y0 + button_height
 
-        draw.rounded_rectangle(
-            (x0 + 8, y0 + 10, x1 + 8, y1 + 10),
-            radius=radius,
-            fill="#DDD6CA",
-        )
-        draw.rounded_rectangle(
-            (x0, y0, x1, y1),
-            radius=radius,
-            fill=section["fill"],
-            outline=section["outline"],
-            width=5,
-        )
-        draw.rounded_rectangle(
-            (x0 + 18, y0 + 18, x1 - 18, y1 - 18),
-            radius=54,
-            outline="#F8F6F1",
-            width=3,
-        )
-        draw_icon(section["icon"], x0, y0, x1, y1, section["accent"])
+        draw.rounded_rectangle((x0 + 8, y0 + 10, x1 + 8, y1 + 10), radius=radius, fill="#DED7CB")
+        draw.rounded_rectangle((x0, y0, x1, y1), radius=radius, fill=section["fill"], outline=section["outline"], width=5)
+        draw.rounded_rectangle((x0 + 18, y0 + 18, x1 - 18, y1 - 18), radius=54, outline="#F9F6F1", width=3)
 
-        title_bbox = draw.textbbox((0, 0), section["title"], font=title_font)
-        title_w = title_bbox[2] - title_bbox[0]
-        title_x = x0 + (button_width - title_w) // 2
-        title_y = y0 + 390
-        draw.text((title_x, title_y), section["title"], font=title_font, fill="#171717")
+        draw_icon(section["icon"], x0, y0, x1, y1, section["accent"])
+        draw_centered_text(draw, (x0 + 20, y0 + 358, x1 - 20, y1 - 68), section["title"], title_font, "#141518")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path, format="PNG")
@@ -148,16 +182,16 @@ def create_rich_menu(access_token: str, liff_id: str) -> str:
     rich_menu = {
         "size": {"width": 2500, "height": 843},
         "selected": True,
-        "name": "fat_loss_os_light_v5",
+        "name": "fat_loss_os_light_v7",
         "chatBarText": "Fat Loss OS",
         "areas": [
             {
                 "bounds": {"x": 0, "y": 0, "width": 833, "height": 843},
-                "action": {"type": "uri", "label": "今日日誌", "uri": f"https://liff.line.me/{liff_id}?tab=today"},
+                "action": {"type": "uri", "label": "熱量日誌", "uri": f"https://liff.line.me/{liff_id}?tab=today"},
             },
             {
                 "bounds": {"x": 833, "y": 0, "width": 834, "height": 843},
-                "action": {"type": "uri", "label": "吃什麼", "uri": f"https://liff.line.me/{liff_id}?tab=eat"},
+                "action": {"type": "uri", "label": "食物推薦", "uri": f"https://liff.line.me/{liff_id}?tab=eat"},
             },
             {
                 "bounds": {"x": 1667, "y": 0, "width": 833, "height": 843},

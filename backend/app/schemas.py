@@ -11,6 +11,56 @@ BreakfastHabit = Literal["regular", "occasional", "rare", "variable", "unknown"]
 CarbNeed = Literal["high", "flexible", "low", "variable"]
 DinnerStyle = Literal["light", "normal", "indulgent", "high_protein", "variable"]
 CompensationStyle = Literal["normal_return", "gentle_1d", "distributed_2_3d", "let_system_decide", "gentle"]
+TrafficClass = Literal["standard", "self_use_canary"]
+
+
+class StructuredIntentRoute(BaseModel):
+    task: str = "fallback_ambiguous"
+    confidence: float = 0.0
+    handoff_hint: str = ""
+    route_policy: str = "deterministic_fallback"
+    route_source: str = "deterministic"
+    fast_path: bool = False
+
+
+class ClarificationDecision(BaseModel):
+    mode: Literal["direct_clarification", "comparison_mode", "generic_estimate_fallback", "ask_first_handoff", "none"] = "none"
+    suggested_slot: Optional[str] = None
+    followup_question: Optional[str] = None
+    primary_uncertainties: list[str] = Field(default_factory=list)
+    auto_record_ok: Optional[bool] = None
+    generic_estimate_ok: Optional[bool] = None
+
+
+class RelevantMemorySlice(BaseModel):
+    task_label: str
+    signal_labels: list[str] = Field(default_factory=list)
+    hypothesis_labels: list[str] = Field(default_factory=list)
+    recent_example_ids: list[str] = Field(default_factory=list)
+    selected_signal_count: int = 0
+    selected_hypothesis_count: int = 0
+    selected_recent_example_count: int = 0
+    relevance_selected_by_llm: bool = False
+
+
+class RecommendationPolicyDecision(BaseModel):
+    ordered_keys: list[str] = Field(default_factory=list)
+    hero_key: Optional[str] = None
+    hero_reason: str = ""
+    coach_message: str = ""
+    strategy_label: str = ""
+    reason_factors: dict[str, list[str]] = Field(default_factory=dict)
+    stage: str = "refined_hero_choice"
+
+
+class CoachingDecision(BaseModel):
+    intervention_importance: str = "low"
+    urgency: str = "low"
+    coach_message: str = ""
+    strategy_label: str = ""
+    reason_factors: list[str] = Field(default_factory=list)
+    trigger_type: Optional[str] = None
+    envelope_summary: dict[str, Any] = Field(default_factory=dict)
 
 
 class IntakeRequest(BaseModel):
@@ -274,6 +324,10 @@ class DaySummaryResponse(BaseModel):
     weekly_drift_kcal: int = 0
     weekly_drift_status: str = "on_track"
     should_offer_weekly_recovery: bool = False
+    weekly_coach_message: str = ""
+    weekly_strategy_label: str = ""
+    weekly_reason_factors: list[str] = Field(default_factory=list)
+    weekly_trigger_type: Optional[str] = None
     recovery_overlay: Optional[dict[str, Any]] = None
     pending_async_updates_count: int = 0
 
@@ -296,6 +350,11 @@ class RecommendationsResponse(BaseModel):
     remaining_kcal: int
     items: list[RecommendationItem]
     location_context_used: Optional[str] = None
+    coach_message: str = ""
+    hero_reason: str = ""
+    strategy_label: str = ""
+    refining: bool = False
+    policy_contract: dict[str, Any] = Field(default_factory=dict)
     saved_place_options: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -401,12 +460,14 @@ class DayPlanResponse(BaseModel):
     allocations: dict[str, int]
     coach_message: str
     reason_factors: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class CompensationResponse(BaseModel):
     options: list[dict[str, Any]]
     coach_message: str
     reason_factors: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class BodyGoalResponse(BaseModel):
@@ -488,6 +549,8 @@ class EatFeedResponse(BaseModel):
     location_context_used: Optional[str] = None
     smart_chips: list[SmartChipResponse] = Field(default_factory=list)
     hero_reason: str = ""
+    refining: bool = False
+    policy_contract: dict[str, Any] = Field(default_factory=dict)
     more_results_available: bool = False
 
 
@@ -752,10 +815,14 @@ class TraceListItemResponse(BaseModel):
     route_status: str = "unknown"
     provider_name: Optional[str] = None
     model_name: Optional[str] = None
+    execution_phase: Optional[str] = None
+    ingress_mode: Optional[str] = None
     route_policy: Optional[str] = None
     route_target: Optional[str] = None
     llm_cache: Optional[str] = None
     latency_ms: Optional[int] = None
+    is_canary: bool = False
+    traffic_class: Optional[str] = None
     has_error: bool = False
     has_feedback: bool = False
     has_unknown_case: bool = False

@@ -15,6 +15,8 @@ from ..models import MealDraft, MealLog, User
 from ..providers.factory import get_ai_provider
 from ..schemas import IntakeRequest
 from .knowledge import build_estimation_knowledge_packet, ground_brand_menu_context
+from .llm_support import review_estimate_with_llm
+from .memory import build_intake_memory_packet
 from .proactive import create_search_job
 from .storage import attachment_for_persistence, infer_source_type_from_mime, load_attachment_bytes, store_attachment_bytes
 
@@ -139,6 +141,7 @@ def enrich_attachment_with_video_probe(attachment: dict[str, Any], *, content: b
 
 def build_video_refinement_payload(
     *,
+    db: Session,
     user: User,
     trace_id: str | None,
     text: str,
@@ -150,6 +153,8 @@ def build_video_refinement_payload(
     notify_on_complete: bool,
 ) -> dict[str, Any]:
     attachment = first_video_attachment(attachments) or {}
+    intake_memory_packet = build_intake_memory_packet(db, user, draft=draft)
+    communication_profile = ((intake_memory_packet.get("user_stated_constraints") or {}).get("communication_profile")) or {}
     payload: dict[str, Any] = {
         "line_user_id": user.line_user_id,
         "text": text,
@@ -161,6 +166,8 @@ def build_video_refinement_payload(
         "transcript": metadata.get("transcript", ""),
         "brand_hints": metadata.get("brand_hints", []),
         "scene_sequence": metadata.get("scene_sequence", []),
+        "intake_memory_packet": intake_memory_packet,
+        "communication_profile": communication_profile,
     }
     if trace_id:
         payload["trace_id"] = trace_id
@@ -188,6 +195,7 @@ def maybe_queue_video_refinement_job(
     if first_video_attachment(attachments) is None:
         return None
     payload = build_video_refinement_payload(
+        db=db,
         user=user,
         trace_id=trace_id,
         text=text,
@@ -210,6 +218,9 @@ def build_video_refinement_result(request_payload: dict[str, Any]) -> tuple[dict
     user_scope = request_payload.get("line_user_id") or "video-user"
     source_id = request_payload.get("target_log_id") or request_payload.get("target_draft_id") or "video"
     transcript = str(request_payload.get("transcript") or "")
+    provider = get_ai_provider()
+    intake_memory_packet = request_payload.get("intake_memory_packet") if isinstance(request_payload.get("intake_memory_packet"), dict) else {}
+    communication_profile = request_payload.get("communication_profile") if isinstance(request_payload.get("communication_profile"), dict) else {}
     notes: list[str] = []
     try:
         keyframes = extract_video_keyframes(
@@ -246,7 +257,7 @@ def build_video_refinement_result(request_payload: dict[str, Any]) -> tuple[dict
             source_mode="video",
         )
         estimate = asyncio.run(
-            get_ai_provider().estimate_meal(
+            provider.estimate_meal(
                 text=combined_text,
                 meal_type=request_payload.get("meal_type"),
                 mode="standard",
@@ -254,24 +265,55 @@ def build_video_refinement_result(request_payload: dict[str, Any]) -> tuple[dict
                 clarification_count=0,
                 attachments=provider_attachments,
                 knowledge_packet=knowledge_packet,
+                memory_packet=intake_memory_packet,
+                communication_profile=communication_profile,
+            )
+        )
+        estimate = asyncio.run(
+            review_estimate_with_llm(
+                provider,
+                text=combined_text,
+                meal_type=request_payload.get("meal_type"),
+                mode="standard",
+                source_mode="video",
+                estimate=estimate,
+                knowledge_packet=knowledge_packet,
+                memory_packet=intake_memory_packet,
+                communication_profile=communication_profile,
             )
         )
     except Exception as exc:
         notes.append(f"video_estimate_failed: {exc}")
+        fallback_packet = build_estimation_knowledge_packet(
+            request_payload.get("text", ""),
+            source_hint=transcript,
+            meal_type=request_payload.get("meal_type"),
+            source_mode="video",
+        )
         estimate = asyncio.run(
-            get_ai_provider().estimate_meal(
+            provider.estimate_meal(
                 text=request_payload.get("text", ""),
                 meal_type=request_payload.get("meal_type"),
                 mode="standard",
                 source_mode="video",
                 clarification_count=0,
                 attachments=[],
-                knowledge_packet=build_estimation_knowledge_packet(
-                    request_payload.get("text", ""),
-                    source_hint=transcript,
-                    meal_type=request_payload.get("meal_type"),
-                    source_mode="video",
-                ),
+                knowledge_packet=fallback_packet,
+                memory_packet=intake_memory_packet,
+                communication_profile=communication_profile,
+            )
+        )
+        estimate = asyncio.run(
+            review_estimate_with_llm(
+                provider,
+                text=request_payload.get("text", ""),
+                meal_type=request_payload.get("meal_type"),
+                mode="standard",
+                source_mode="video",
+                estimate=estimate,
+                knowledge_packet=fallback_packet,
+                memory_packet=intake_memory_packet,
+                communication_profile=communication_profile,
             )
         )
 

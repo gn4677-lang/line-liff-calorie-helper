@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-import json
 import math
 import uuid
 from dataclasses import dataclass, field
@@ -15,6 +13,7 @@ from ..config import resolved_timezone, settings
 from ..models import FavoriteStore, Food, GoldenOrder, MealLog, RecommendationProfile, RecommendationSession, User, utcnow
 from ..providers.factory import get_ai_provider
 from ..schemas import EatFeedCandidateResponse, EatFeedRequest, EatFeedResponse, EatFeedSectionResponse, SmartChipResponse
+from .llm_support import _extract_provider_usage, complete_structured_sync, rerank_candidates_sync, select_relevant_memory_slice_sync
 from .memory import build_recommendation_memory_packet
 from .proactive import build_nearby_heuristics, resolve_location_context
 
@@ -79,9 +78,28 @@ class Candidate:
     final_score: float = 0.0
 
 
-def build_eat_feed(db: Session, user: User, request: EatFeedRequest, *, remaining_kcal: int) -> EatFeedResponse:
+def build_eat_feed(
+    db: Session,
+    user: User,
+    request: EatFeedRequest,
+    *,
+    remaining_kcal: int,
+    provider: Any | None = None,
+) -> EatFeedResponse:
     profile = _get_or_create_profile(db, user)
+    provider = provider or get_ai_provider()
     memory_packet = build_recommendation_memory_packet(db, user, meal_type=request.meal_type, remaining_kcal=remaining_kcal)
+    if settings.eat_policy_llm_enabled:
+        memory_packet = select_relevant_memory_slice_sync(
+            provider,
+            task_label="eat_feed",
+            text=request.query or request.style_context or "",
+            meal_type=request.meal_type,
+            memory_packet=memory_packet,
+        )
+    memory_contract = memory_packet.pop("_relevant_memory_slice_contract", None)
+    memory_usage = memory_packet.pop("_relevant_memory_slice_usage", None)
+    communication_profile = memory_packet.get("communication_profile") or {}
     recent_logs = list(
         db.scalars(
             select(MealLog)
@@ -101,12 +119,13 @@ def build_eat_feed(db: Session, user: User, request: EatFeedRequest, *, remainin
         profile=profile,
         selected_chip_id=None,
     )
-    smart_chips = generate_session_smart_chips(
+    smart_chips, chip_usage = generate_session_smart_chips(
         request=request,
         memory_packet=memory_packet,
         ranked_candidates=ranked,
         recent_logs=recent_logs,
         profile=profile,
+        provider=provider,
     )
     smart_chips = _filter_material_smart_chips(
         smart_chips,
@@ -130,6 +149,15 @@ def build_eat_feed(db: Session, user: User, request: EatFeedRequest, *, remainin
             selected_chip_id=selected_chip_id,
         )
 
+    rerank_payload = _apply_llm_candidate_rerank(
+        ranked,
+        provider=provider if settings.eat_policy_llm_enabled else None,
+        request=request,
+        remaining_kcal=remaining_kcal,
+        memory_packet=memory_packet,
+        communication_profile=communication_profile,
+    )
+    hero_reason = rerank_payload["hero_reason"]
     top_pick = _candidate_to_response(ranked[0]) if ranked else None
     backup_picks = [_candidate_to_response(item) for item in ranked[1:3]]
     exploration_sections = _build_exploration_sections(ranked[3:], request=request)
@@ -150,7 +178,13 @@ def build_eat_feed(db: Session, user: User, request: EatFeedRequest, *, remainin
         exploration_sections=exploration_sections,
         location_context_used=location_context.get("location_context") if location_context else None,
         smart_chips=smart_chips,
-        hero_reason=(top_pick.reason_factors[0] if top_pick and top_pick.reason_factors else ""),
+        hero_reason=hero_reason or (top_pick.reason_factors[0] if top_pick and top_pick.reason_factors else ""),
+        refining=False,
+        policy_contract={
+            **(rerank_payload.get("policy_contract") or {}),
+            "relevant_memory_slice": memory_contract,
+            "llm_usage": _merge_usage(memory_usage, chip_usage, rerank_payload.get("provider_usage")),
+        },
         more_results_available=any(section.items for section in exploration_sections),
     )
 
@@ -260,10 +294,12 @@ def generate_session_smart_chips(
     ranked_candidates: list[Candidate],
     recent_logs: list[MealLog],
     profile: RecommendationProfile,
-) -> list[SmartChipResponse]:
+    provider: Any | None = None,
+) -> tuple[list[SmartChipResponse], dict[str, Any]]:
+    """Returns (smart_chips, chip_selection_usage)."""
     top_window = ranked_candidates[:10]
     if not top_window:
-        return []
+        return [], {}
     scored: list[dict[str, Any]] = []
     for chip_id, spec in SMART_CHIP_LIBRARY.items():
         supported = sum(1 for candidate in top_window if _candidate_supports_chip(candidate, chip_id))
@@ -280,12 +316,12 @@ def generate_session_smart_chips(
         )
     scored.sort(key=lambda item: (-item["score"], -item["supported_candidate_count"], item["label"]))
     shortlist = scored[:6]
-    selected_ids = _choose_chip_ids(shortlist, request=request, memory_packet=memory_packet)
+    selected_ids, chip_usage = _choose_chip_ids(shortlist, request=request, memory_packet=memory_packet, provider=provider)
     if not selected_ids:
         selected_ids = [item["id"] for item in shortlist[:3]]
     chosen = [item for item in shortlist if item["id"] in selected_ids]
     chosen.sort(key=lambda item: selected_ids.index(item["id"]))
-    return [
+    chips = [
         SmartChipResponse(
             id=item["id"],
             label=item["label"],
@@ -294,6 +330,7 @@ def generate_session_smart_chips(
         )
         for item in chosen[:3]
     ]
+    return chips, chip_usage
 
 
 def _filter_material_smart_chips(
@@ -815,51 +852,142 @@ def _smart_chip_score(
     return score
 
 
-def _choose_chip_ids(shortlist: list[dict[str, Any]], *, request: EatFeedRequest, memory_packet: dict[str, Any]) -> list[str]:
+def _choose_chip_ids(
+    shortlist: list[dict[str, Any]],
+    *,
+    request: EatFeedRequest,
+    memory_packet: dict[str, Any],
+    provider: Any | None = None,
+) -> tuple[list[str], dict[str, Any]]:
+    """Returns (selected_chip_ids, provider_usage)."""
     if len(shortlist) <= 3:
-        return [item["id"] for item in shortlist]
-    provider = get_ai_provider()
-    if not settings.ai_builder_token or not hasattr(provider, "_post_json") or not hasattr(provider, "_parse_json_object"):
-        return [item["id"] for item in shortlist[:3]]
+        return [item["id"] for item in shortlist], {}
+    provider = provider or get_ai_provider()
+    if not settings.ai_builder_token:
+        return [item["id"] for item in shortlist[:3]], {}
+    prompt = {
+        "meal_type": request.meal_type,
+        "time_context": request.time_context,
+        "remaining_kcal": memory_packet.get("remaining_kcal"),
+        "preferences": {
+            "carb_need": memory_packet.get("preferences", {}).get("carb_need"),
+            "dinner_style": memory_packet.get("preferences", {}).get("dinner_style"),
+        },
+        "recent_acceptance": [item.get("description", "") for item in memory_packet.get("recent_acceptance", [])[:5]],
+        "store_context_memory": memory_packet.get("store_context_memory", [])[:4],
+        "chips": shortlist,
+    }
+    parsed = complete_structured_sync(
+        provider,
+        system_prompt='Pick the 3 most useful session-only meal intent chips. Reply with JSON only: {"ids":[...]}',
+        user_payload=prompt,
+        max_tokens=120,
+        temperature=0.1,
+        model_hint="chat",
+    )
+    # Extract provider_usage before the parsed dict is consumed
+    provider_usage = _extract_provider_usage(parsed)
+    allowed = {item["id"] for item in shortlist}
+    ids = [str(item) for item in parsed.get("ids", []) if str(item) in allowed]
+    return ids or [item["id"] for item in shortlist[:3]], provider_usage
 
-    async def _call_llm() -> list[str]:
-        prompt = {
-            "meal_type": request.meal_type,
-            "time_context": request.time_context,
-            "remaining_kcal": memory_packet.get("remaining_kcal"),
-            "preferences": {
-                "carb_need": memory_packet.get("preferences", {}).get("carb_need"),
-                "dinner_style": memory_packet.get("preferences", {}).get("dinner_style"),
-            },
-            "recent_acceptance": [item.get("description", "") for item in memory_packet.get("recent_acceptance", [])[:5]],
-            "store_context_memory": memory_packet.get("store_context_memory", [])[:4],
-            "chips": shortlist,
-        }
-        payload = await provider._post_json(
-            "/chat/completions",
-            timeout=20,
-            payload={
-                "model": settings.builderspace_chat_model,
-                "temperature": 0.1,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "Pick the 3 most useful session-only meal intent chips. Reply with JSON only: {\"ids\":[...]}",
-                    },
-                    {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
-                ],
-                "max_tokens": 120,
-            },
-        )
-        parsed = provider._parse_json_object(payload)
-        allowed = {item["id"] for item in shortlist}
-        return [item for item in parsed.get("ids", []) if item in allowed]
 
-    try:
-        ids = asyncio.run(_call_llm())
-    except Exception:
-        ids = []
-    return ids or [item["id"] for item in shortlist[:3]]
+def _apply_llm_candidate_rerank(
+    ranked: list[Candidate],
+    *,
+    provider: Any | None,
+    request: EatFeedRequest,
+    remaining_kcal: int,
+    memory_packet: dict[str, Any],
+    communication_profile: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not ranked:
+        return {"hero_reason": "", "policy_contract": {}, "provider_usage": {}}
+    payload = rerank_candidates_sync(
+        provider,
+        task_label="eat_feed",
+        meal_type=request.meal_type,
+        remaining_kcal=remaining_kcal,
+        memory_packet=memory_packet,
+        communication_profile=communication_profile,
+        candidates=[
+            {
+                "key": item.candidate_id,
+                "name": item.title,
+                "group": item.source_type,
+                "kcal_low": item.kcal_low,
+                "kcal_high": item.kcal_high,
+                "store_name": item.store_name,
+                "travel_minutes": item.travel_minutes,
+                "distance_meters": item.distance_meters,
+                "reason_factors": item.reason_factors,
+                "support_tags": sorted(item.support_tags),
+                "final_score": item.final_score,
+            }
+            for item in ranked[:10]
+        ],
+    )
+    if payload["ordered_keys"]:
+        by_key = {item.candidate_id: item for item in ranked}
+        reordered = [by_key[key] for key in payload["ordered_keys"] if key in by_key]
+        reordered.extend(item for item in ranked if item.candidate_id not in payload["ordered_keys"])
+        ranked[:] = reordered
+    for candidate in ranked:
+        override = payload["reason_factors"].get(candidate.candidate_id)
+        if override:
+            candidate.reason_factors = override[:4]
+    return {
+        "hero_reason": payload["hero_reason"],
+        "policy_contract": payload.get("policy_contract") or {},
+        "provider_usage": payload.get("provider_usage") or {},
+    }
+
+
+def _merge_usage(*parts: object) -> dict[str, Any]:
+    merged: dict[str, Any] = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "request_count": 0,
+        "estimated_cost_usd": 0.0,
+        "model_names": [],
+        "model_hints": [],
+    }
+    seen_models: set[str] = set()
+    seen_hints: set[str] = set()
+    last_non_null: dict[str, Any] = {}
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        merged["prompt_tokens"] += int(part.get("prompt_tokens") or 0)
+        merged["completion_tokens"] += int(part.get("completion_tokens") or 0)
+        merged["total_tokens"] += int(part.get("total_tokens") or 0)
+        merged["request_count"] += int(part.get("request_count") or 0)
+        merged["estimated_cost_usd"] = round(float(merged["estimated_cost_usd"]) + float(part.get("estimated_cost_usd") or 0.0), 6)
+        model_name = str(part.get("model_name") or "").strip()
+        if model_name and model_name not in seen_models:
+            seen_models.add(model_name)
+            merged["model_names"].append(model_name)
+        model_hint = str(part.get("model_hint") or "").strip()
+        if model_hint and model_hint not in seen_hints:
+            seen_hints.add(model_hint)
+            merged["model_hints"].append(model_hint)
+        for key in (
+            "provider_name",
+            "rate_limit_remaining_requests",
+            "rate_limit_remaining_tokens",
+            "rate_limit_reset_requests_s",
+            "rate_limit_reset_tokens_s",
+            "request_budget_per_hour",
+            "token_budget_per_hour",
+            "cost_budget_usd_per_day",
+        ):
+            if part.get(key) is not None:
+                last_non_null[key] = part.get(key)
+    if not merged["total_tokens"]:
+        merged["total_tokens"] = merged["prompt_tokens"] + merged["completion_tokens"]
+    merged.update(last_non_null)
+    return merged
 
 
 def _match_session_candidate(session: RecommendationSession, description_raw: str) -> dict[str, Any] | None:

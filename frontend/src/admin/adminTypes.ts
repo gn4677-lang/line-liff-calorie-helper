@@ -70,6 +70,8 @@ export type TraceListItem = {
   route_status: string
   provider_name?: string | null
   model_name?: string | null
+  execution_phase?: string | null
+  ingress_mode?: string | null
   route_policy?: string | null
   route_target?: string | null
   llm_cache?: string | null
@@ -110,13 +112,23 @@ export type ObservabilityDashboard = {
       request_count: number
       avg_latency_ms: number
     }>
+    execution_phase_breakdown: Array<{ label: string; count: number; avg_latency_ms: number }>
+    ingress_mode_breakdown: Array<{ label: string; count: number; avg_latency_ms: number }>
     route_policy_breakdown: Array<{ label: string; count: number; avg_latency_ms: number }>
     llm_cache_breakdown: Array<{ label: string; count: number; avg_latency_ms: number }>
     route_target_breakdown: Array<{ label: string; count: number; avg_latency_ms: number }>
+    planning_copy_breakdown: Array<{ label: string; count: number; avg_latency_ms: number }>
+    packet_coverage_summary: {
+      memory_packet_present_runs: number
+      communication_profile_present_runs: number
+      planning_copy_attempted_runs: number
+    }
     llm_path_summary: {
       saved_local_requests: number
       remote_llm_requests: number
       cache_hits: number
+      webhook_ingress_events: number
+      webhook_worker_runs: number
     }
   }
   product_panels: {
@@ -184,6 +196,17 @@ export type ObservabilityDashboard = {
   eval_panels: {
     top_unknown_labels: Array<{ label: string; count: number }>
     top_feedback_labels: Array<{ label: string; count: number }>
+    execution_phase_breakdown: Array<{ label: string; count: number; avg_latency_ms: number }>
+    ingress_mode_breakdown: Array<{ label: string; count: number; avg_latency_ms: number }>
+    webhook_worker_status_breakdown: Array<{ label: string; count: number; avg_latency_ms: number }>
+    fallback_reason_breakdown: Array<{ label: string; count: number; avg_latency_ms: number }>
+    deterministic_integration_error_codes: Array<{ label: string; count: number }>
+    packet_coverage_summary: {
+      memory_packet_present_runs: number
+      communication_profile_present_runs: number
+      planning_copy_attempted_runs: number
+      knowledge_packet_version_runs: number
+    }
   }
   attention_panels: {
     open_alerts: AlertItem[]

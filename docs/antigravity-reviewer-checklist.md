@@ -27,6 +27,7 @@ Use this after antigravity returns a frontend revision.
 - [ ] Does it feel correct inside LINE LIFF?
 - [ ] Does it avoid desktop-first spacing and card density?
 - [ ] Are the most important numbers and actions above the fold on common mobile screens?
+- [ ] If LINE Rich Menu artwork changed, does it still follow [line-rich-menu-design-guardrails.md](/C:/Users/exsaf/Documents/Playground/apps/line-liff-calorie-helper/docs/line-rich-menu-design-guardrails.md)?
 
 ## Design Quality
 

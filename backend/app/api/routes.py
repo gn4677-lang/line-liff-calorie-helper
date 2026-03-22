@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 import json
 import re
+import uuid
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, Response, UploadFile
 from sqlalchemy import select
@@ -10,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from ..models import ActivityAdjustment, Food, MealDraft, MealEvent, MealLog, PlanEvent, SearchJob, WeightLog, utcnow
+from ..models import ActivityAdjustment, ConversationTrace, Food, MealDraft, MealEvent, MealLog, PlanEvent, SearchJob, WeightLog, utcnow
 from ..providers.factory import get_ai_provider
 from ..schemas import (
     ActivityAdjustmentRequest,
@@ -38,6 +39,7 @@ from ..schemas import (
     PreferenceResponse,
     PreferencesUpdateRequest,
     SavedPlaceRequest,
+    StructuredIntentRoute,
     StandardResponse,
     VideoIntakeRequest,
     WeightLogRequest,
@@ -81,18 +83,29 @@ from ..services.intake import (
     update_draft_with_clarification,
 )
 from ..services.knowledge import KNOWLEDGE_PACKET_VERSION, build_estimation_knowledge_packet
-from ..services.line import build_draft_flex_message, fetch_line_content, reply_line_message, verify_line_signature
+from ..services.inbound_events import enqueue_line_event
+from ..services.line import build_draft_flex_message, fetch_line_content, reply_line_message, send_line_response, verify_line_signature
 from ..services.meal_events import create_meal_event, list_meal_events, meal_event_to_response, parse_future_meal_event_text
 from ..services.memory import (
     apply_onboarding_preferences,
     apply_preference_correction,
+    build_intake_memory_packet,
     build_memory_profile,
     build_onboarding_state,
+    build_planning_memory_packet,
+    build_recommendation_memory_packet,
     detect_chat_correction,
     get_or_create_preferences,
     mark_onboarding_skipped,
     preference_to_response,
     synthesize_hypotheses,
+)
+from ..services.llm_support import (
+    classify_intent_with_llm,
+    compose_weekly_coaching_sync,
+    rerank_candidates_sync,
+    review_estimate_with_llm,
+    select_relevant_memory_slice_sync,
 )
 from ..services.observability import (
     create_conversation_trace,
@@ -106,6 +119,7 @@ from ..services.observability import (
     record_outcome_event,
     record_uncertainty_event,
     record_unknown_case_event,
+    resolve_traffic_class,
     route_layers_for_task,
     start_task_run,
 )
@@ -153,6 +167,42 @@ def _build_draft_message(draft: MealDraft) -> tuple[str, list[object] | None]:
     uncertainties = metadata.get("primary_uncertainties", [])
     uncertainty_text = f" 目前最不確定的是：{', '.join(uncertainties)}。" if uncertainties else ""
     mode = metadata.get("confirmation_mode")
+    clarification_kind = metadata.get("clarification_kind") or metadata.get("llm_clarification_mode")
+    answer_options = metadata.get("answer_options") or None
+    followup_question = draft.followup_question or "Tell me the one detail that matters most and I will tighten the estimate."
+
+    if mode == "needs_clarification" and clarification_kind == "comparison_mode":
+        return (
+            f"{followup_question}\nYou can answer with a comparison like 'about the same as usual', or tap one of the quick options.",
+            answer_options,
+        )
+    if mode == "needs_clarification" and clarification_kind == "generic_estimate_fallback":
+        return (
+            f"{followup_question}\nIf you are not sure, I can keep a generic estimate around {draft.estimate_kcal} kcal.",
+            answer_options,
+        )
+    if mode == "needs_clarification" and clarification_kind == "ask_first_handoff":
+        return (
+            f"{followup_question}\nI only need one quick detail before I decide whether to log it now.",
+            answer_options,
+        )
+    if mode == "correction_preview":
+        original = metadata.get("original_kcal")
+        diff = metadata.get("difference_kcal")
+        change_text = ""
+        if original is not None and diff is not None:
+            direction = "up" if diff >= 0 else "down"
+            change_text = f" I updated the estimate from about {original} kcal {direction} by {abs(diff)} kcal."
+        return f"Here is the corrected preview: about {draft.estimate_kcal} kcal ({kcal_range}).{change_text}", None
+    if mode == "auto_recordable":
+        note = f" Main uncertainty: {', '.join(uncertainties[:2])}." if uncertainties else ""
+        return f"I can log this now at about {draft.estimate_kcal} kcal ({kcal_range}).{note}", None
+    if metadata.get("stop_reason") == "budget_exhausted":
+        note = f" Main uncertainty: {', '.join(uncertainties[:2])}." if uncertainties else ""
+        return (
+            f"I do not want to keep grilling you for details, so I am keeping a generic estimate at about {draft.estimate_kcal} kcal ({kcal_range}).{note}",
+            None,
+        )
 
     if mode == "needs_clarification":
         return draft.followup_question or "我還差一個關鍵細節，補一下我就能幫你記錄。", metadata.get("answer_options") or None
@@ -175,6 +225,99 @@ def _build_draft_message(draft: MealDraft) -> tuple[str, list[object] | None]:
             None,
         )
     return f"我目前先抓這餐約 {draft.estimate_kcal} kcal，範圍 {kcal_range}。{uncertainty_text}", None
+
+
+def _build_confirmation_message(draft: MealDraft, log: MealLog) -> str:
+    metadata = draft.draft_context or {}
+    if metadata.get("correction_target_log_id"):
+        return f"已更新上一筆紀錄，現在抓 {log.kcal_estimate} kcal。我會用這次修正當成之後的參考。"
+    return f"Logged {log.description_raw} at about {log.kcal_estimate} kcal."
+
+
+def _normalize_llm_usage(raw: object) -> dict[str, object]:
+    if not isinstance(raw, dict):
+        return {}
+    usage: dict[str, object] = {}
+    for key in (
+        "provider_name",
+        "model_name",
+        "model_hint",
+        "rate_limit_remaining_requests",
+        "rate_limit_remaining_tokens",
+        "rate_limit_reset_requests_s",
+        "rate_limit_reset_tokens_s",
+        "request_budget_per_hour",
+        "token_budget_per_hour",
+        "cost_budget_usd_per_day",
+    ):
+        if raw.get(key) is not None:
+            usage[key] = raw.get(key)
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens", "request_count"):
+        value = raw.get(key)
+        if value is None:
+            continue
+        try:
+            usage[key] = int(value)
+        except (TypeError, ValueError):
+            continue
+    estimated_cost = raw.get("estimated_cost_usd")
+    if estimated_cost is not None:
+        try:
+            usage["estimated_cost_usd"] = float(estimated_cost)
+        except (TypeError, ValueError):
+            pass
+    return usage
+
+
+def _merge_llm_usage(*parts: object) -> dict[str, object]:
+    normalized_parts = [part for part in (_normalize_llm_usage(part) for part in parts) if part]
+    if not normalized_parts:
+        return {}
+
+    merged: dict[str, object] = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "request_count": 0,
+        "estimated_cost_usd": 0.0,
+        "model_names": [],
+        "model_hints": [],
+    }
+    seen_models: set[str] = set()
+    seen_hints: set[str] = set()
+    last_non_null: dict[str, object] = {}
+
+    for part in normalized_parts:
+        merged["prompt_tokens"] = int(merged["prompt_tokens"]) + int(part.get("prompt_tokens") or 0)
+        merged["completion_tokens"] = int(merged["completion_tokens"]) + int(part.get("completion_tokens") or 0)
+        merged["total_tokens"] = int(merged["total_tokens"]) + int(part.get("total_tokens") or 0)
+        merged["request_count"] = int(merged["request_count"]) + int(part.get("request_count") or 0)
+        merged["estimated_cost_usd"] = round(float(merged["estimated_cost_usd"]) + float(part.get("estimated_cost_usd") or 0.0), 6)
+        model_name = str(part.get("model_name") or "").strip()
+        if model_name and model_name not in seen_models:
+            seen_models.add(model_name)
+            merged["model_names"].append(model_name)
+        model_hint = str(part.get("model_hint") or "").strip()
+        if model_hint and model_hint not in seen_hints:
+            seen_hints.add(model_hint)
+            merged["model_hints"].append(model_hint)
+        for key in (
+            "provider_name",
+            "rate_limit_remaining_requests",
+            "rate_limit_remaining_tokens",
+            "rate_limit_reset_requests_s",
+            "rate_limit_reset_tokens_s",
+            "request_budget_per_hour",
+            "token_budget_per_hour",
+            "cost_budget_usd_per_day",
+        ):
+            if part.get(key) is not None:
+                last_non_null[key] = part.get(key)
+
+    if not int(merged["total_tokens"]):
+        merged["total_tokens"] = int(merged["prompt_tokens"]) + int(merged["completion_tokens"])
+    merged.update(last_non_null)
+    return merged
 
 
 def _latest_open_draft(db: Session, user) -> MealDraft | None:
@@ -263,6 +406,68 @@ def _route_text_task(text: str) -> tuple[str, float]:
     return "fallback_ambiguous", 0.35
 
 
+def _feature_flags_for_task(task_family: str) -> dict[str, bool]:
+    return {
+        "chat_capture_llm_enabled": settings.chat_capture_llm_enabled if task_family in {"meal_log_now", "meal_log_correction", "clarification", "confirmation", "fallback_ambiguous"} else False,
+        "eat_policy_llm_enabled": settings.eat_policy_llm_enabled if task_family in {"remaining_or_recommendation", "nearby_recommendation"} else False,
+        "weekly_coach_llm_enabled": settings.weekly_coach_llm_enabled if task_family in {"weekly_drift_probe", "planning", "compensation"} else False,
+    }
+
+
+async def _route_text_task_hybrid(provider, text: str, *, open_draft_present: bool) -> dict[str, object]:
+    base_task, base_confidence = _route_text_task(text)
+    fast_path_tasks = {
+        "weight_log",
+        "meal_log_correction",
+        "remaining_or_recommendation",
+        "nutrition_or_food_qa",
+    }
+    if not settings.chat_capture_llm_enabled:
+        contract = StructuredIntentRoute(
+            task=base_task,
+            confidence=base_confidence,
+            handoff_hint="",
+            route_policy="deterministic_only",
+            route_source="deterministic",
+            fast_path=base_task in fast_path_tasks or base_confidence >= 0.82,
+        )
+        return contract.model_dump()
+    if base_confidence >= 0.82 or base_task in fast_path_tasks:
+        contract = StructuredIntentRoute(
+            task=base_task,
+            confidence=base_confidence,
+            handoff_hint="",
+            route_policy="deterministic_fast_path",
+            route_source="deterministic",
+            fast_path=True,
+        )
+        return contract.model_dump()
+
+    llm_route = await classify_intent_with_llm(
+        provider,
+        text=text,
+        open_draft_present=open_draft_present,
+    )
+    llm_task = str(llm_route.get("task") or "fallback_ambiguous")
+    llm_confidence = float(llm_route.get("confidence") or 0.0)
+    if llm_confidence >= max(base_confidence, 0.58):
+        return llm_route
+    # Preserve provider_usage from LLM call even when falling back to deterministic
+    fallback_result = StructuredIntentRoute(
+        task=base_task,
+        confidence=base_confidence,
+        handoff_hint=str(llm_route.get("handoff_hint") or "").strip()[:120],
+        route_policy="deterministic_fallback",
+        route_source="deterministic",
+        fast_path=False,
+    )
+    result = fallback_result.model_dump()
+    # Thread through provider_usage for observability
+    if llm_route.get("provider_usage"):
+        result["provider_usage"] = llm_route["provider_usage"]
+    return result
+
+
 def _disambiguation_options() -> list[object]:
     return ["記這餐", "改上一筆", "看推薦", "問營養", "看今天剩多少"]
 
@@ -324,6 +529,11 @@ def _start_observed_task(
     provider=None,
 ) -> tuple[str, str]:
     trace_id = get_request_trace_id(request)
+    is_canary, traffic_class = resolve_traffic_class(
+        user_id=user.id if user is not None else None,
+        line_user_id=getattr(user, "line_user_id", None),
+        input_metadata=input_metadata,
+    )
     create_conversation_trace(
         db,
         trace_id=trace_id,
@@ -335,6 +545,8 @@ def _start_observed_task(
         source_mode=source_mode,
         input_text=input_text,
         input_metadata=input_metadata or {},
+        is_canary=is_canary,
+        traffic_class=traffic_class,
     )
     route_layer_1, route_layer_2 = route_layers_for_task(task_family)
     provider_name, model_name = provider_descriptor(provider, task_family=task_family, source_mode=source_mode)
@@ -349,6 +561,9 @@ def _start_observed_task(
         model_name=model_name,
         prompt_version=getattr(provider, "prompt_version", None),
         knowledge_packet_version=KNOWLEDGE_PACKET_VERSION if task_family in {"meal_log_now", "meal_log_correction"} else None,
+        is_canary=is_canary,
+        traffic_class=traffic_class,
+        result_summary={"feature_flags": _feature_flags_for_task(task_family)},
     )
     return trace_id, task_run_id
 
@@ -414,6 +629,24 @@ async def _estimate_with_knowledge(
 ):
     metadata = metadata or {}
     source_hint_parts = [_source_hint_from_metadata(metadata), _store_context_hint(db, user, text)]
+    intake_memory_packet = build_intake_memory_packet(db, user) if db is not None and user is not None else {}
+    memory_slice_contract = None
+    memory_slice_usage = None
+    if intake_memory_packet and provider is not None and settings.chat_capture_llm_enabled:
+        intake_memory_packet = select_relevant_memory_slice_sync(
+            provider,
+            task_label="intake",
+            text=text,
+            meal_type=meal_type,
+            memory_packet=intake_memory_packet,
+        )
+        memory_slice_contract = intake_memory_packet.pop("_relevant_memory_slice_contract", None)
+        memory_slice_usage = intake_memory_packet.pop("_relevant_memory_slice_usage", None)
+    communication_profile = (
+        (((intake_memory_packet or {}).get("user_stated_constraints") or {}).get("communication_profile"))
+        if intake_memory_packet
+        else {}
+    )
     knowledge_packet = build_estimation_knowledge_packet(
         text,
         source_hint="\n".join(part for part in source_hint_parts if part) or None,
@@ -429,7 +662,21 @@ async def _estimate_with_knowledge(
         clarification_count=clarification_count,
         attachments=attachments,
         knowledge_packet=knowledge_packet,
+        memory_packet=intake_memory_packet,
+        communication_profile=communication_profile,
     )
+    if settings.chat_capture_llm_enabled:
+        estimate = await review_estimate_with_llm(
+            provider,
+            text=text,
+            meal_type=meal_type,
+            mode=mode,
+            source_mode=source_mode,
+            estimate=estimate,
+            knowledge_packet=knowledge_packet,
+            memory_packet=intake_memory_packet,
+            communication_profile=communication_profile,
+        )
     estimate.knowledge_packet_version = knowledge_packet.get("version")
     estimate.matched_knowledge_packs = knowledge_packet.get("matched_packs", [])
     estimate.evidence_slots = {
@@ -437,6 +684,10 @@ async def _estimate_with_knowledge(
         "knowledge_packet_version": knowledge_packet.get("version"),
         "matched_knowledge_packs": knowledge_packet.get("matched_packs", []),
         "knowledge_strategy": knowledge_packet.get("primary_strategy"),
+        "memory_packet_present": bool(intake_memory_packet),
+        "communication_profile_present": bool(communication_profile),
+        "memory_slice_contract": memory_slice_contract,
+        "memory_slice_usage": memory_slice_usage,
     }
     return estimate
 
@@ -448,6 +699,7 @@ def _task_result_summary_from_estimate(
     extra: dict[str, object] | None = None,
 ) -> dict[str, object]:
     summary: dict[str, object] = dict(extra or {})
+    summary.setdefault("feature_flag_source", "chat_capture_llm_enabled" if settings.chat_capture_llm_enabled else "deterministic_only")
     if source_mode:
         summary["source_mode"] = source_mode
     if estimate is None:
@@ -459,6 +711,14 @@ def _task_result_summary_from_estimate(
     llm_cache = slots.get("llm_cache")
     knowledge_strategy = slots.get("knowledge_strategy")
     matched_packs = estimate.matched_knowledge_packs or []
+    clarification_contract = slots.get("clarification_decision_contract")
+    memory_slice_contract = slots.get("memory_slice_contract")
+    llm_usage = _merge_llm_usage(
+        slots.get("provider_usage"),
+        slots.get("llm_review_usage"),
+        slots.get("memory_slice_usage"),
+        summary.get("llm_usage"),
+    )
     if route_policy:
         summary["route_policy"] = route_policy
     if route_target:
@@ -473,6 +733,12 @@ def _task_result_summary_from_estimate(
         summary["knowledge_packet_version"] = estimate.knowledge_packet_version
     if matched_packs:
         summary["matched_knowledge_packs"] = matched_packs
+    if clarification_contract:
+        summary["clarification_decision"] = clarification_contract
+    if memory_slice_contract:
+        summary["relevant_memory_slice"] = memory_slice_contract
+    if llm_usage:
+        summary["llm_usage"] = llm_usage
     return summary
 
 
@@ -503,6 +769,66 @@ def _task_result_summary_from_draft(
         source_mode=source_mode or draft.source_mode,
         extra=extra,
     )
+    return summary
+
+
+def _build_weekly_coaching_summary(
+    db: Session,
+    user,
+    *,
+    target_date: date,
+    provider=None,
+) -> tuple[object, dict[str, object]]:
+    summary = build_day_summary(db, user, target_date)
+    if provider is None or not settings.weekly_coach_llm_enabled:
+        return summary, {}
+
+    planning_packet = build_planning_memory_packet(db, user)
+    if planning_packet:
+        planning_packet = select_relevant_memory_slice_sync(
+            provider,
+            task_label="weekly_coaching",
+            text="weekly_coaching",
+            meal_type=None,
+            memory_packet=planning_packet,
+        )
+    memory_slice_contract = planning_packet.pop("_relevant_memory_slice_contract", None) if planning_packet else None
+    memory_slice_usage = planning_packet.pop("_relevant_memory_slice_usage", None) if planning_packet else None
+    communication_profile = (planning_packet or {}).get("communication_profile") or {}
+    weekly_envelope = {
+        "target_kcal": summary.target_kcal,
+        "remaining_kcal": summary.remaining_kcal,
+        "weekly_target_kcal": summary.weekly_target_kcal,
+        "weekly_consumed_kcal": summary.weekly_consumed_kcal,
+        "weekly_remaining_kcal": summary.weekly_remaining_kcal,
+        "weekly_drift_kcal": summary.weekly_drift_kcal,
+        "weekly_drift_status": summary.weekly_drift_status,
+        "should_offer_weekly_recovery": summary.should_offer_weekly_recovery,
+        "recovery_overlay": summary.recovery_overlay or {},
+        "target_adjustment_hint": summary.target_adjustment_hint,
+    }
+    coaching_payload = compose_weekly_coaching_sync(
+        provider,
+        weekly_envelope=weekly_envelope,
+        planning_packet=planning_packet,
+        communication_profile=communication_profile,
+    )
+    summary.weekly_coach_message = coaching_payload.get("coach_message") or summary.target_adjustment_hint
+    summary.weekly_strategy_label = coaching_payload.get("strategy_label") or ""
+    summary.weekly_reason_factors = coaching_payload.get("reason_factors") or []
+    summary.weekly_trigger_type = coaching_payload.get("trigger_type")
+    return summary, {
+        "coaching_decision": coaching_payload.get("contract"),
+        "relevant_memory_slice": memory_slice_contract,
+        "weekly_trigger_type": summary.weekly_trigger_type,
+        "llm_usage": _merge_llm_usage(memory_slice_usage, coaching_payload.get("provider_usage")),
+    }
+
+
+def _build_response_summary(db: Session, user, target_date: date, *, provider=None):
+    if provider is None and settings.weekly_coach_llm_enabled:
+        provider = get_ai_provider()
+    summary, _ = _build_weekly_coaching_summary(db, user, target_date=target_date, provider=provider)
     return summary
 
 
@@ -562,7 +888,7 @@ async def current_user(
         display_name = identity.display_name
         request.state.auth_mode = "liff_id_token"
         request.state.verified_identity = identity
-    elif x_line_user_id:
+    elif x_line_user_id and settings.environment != "production":
         line_user_id = x_line_user_id
         display_name = x_display_name or "Demo User"
         request.state.auth_mode = "header_demo"
@@ -759,9 +1085,33 @@ def nearby_recommendations(
     db: Session = Depends(get_db),
     user=Depends(current_user),
 ) -> StandardResponse:
+    provider = get_ai_provider()
+    trace_id, task_run_id = _start_observed_task(
+        db,
+        http_request,
+        user=user,
+        surface="today",
+        task_family="nearby_recommendation",
+        input_text=request.query or "",
+        input_metadata=request.model_dump(),
+        source_mode="text",
+        provider=provider,
+    )
     location_context = resolve_location_context(db, user, request.model_dump())
     summary = build_day_summary(db, user, date.today())
     remaining_kcal = request.remaining_kcal if request.remaining_kcal is not None else summary.remaining_kcal
+    recommendation_packet = build_recommendation_memory_packet(db, user, meal_type=request.meal_type, remaining_kcal=remaining_kcal)
+    if settings.eat_policy_llm_enabled:
+        recommendation_packet = select_relevant_memory_slice_sync(
+            provider,
+            task_label="nearby_recommendation",
+            text=request.query or request.meal_type or "",
+            meal_type=request.meal_type,
+            memory_packet=recommendation_packet,
+        )
+    memory_slice_contract = recommendation_packet.pop("_relevant_memory_slice_contract", None)
+    memory_slice_usage = recommendation_packet.pop("_relevant_memory_slice_usage", None)
+    communication_profile = recommendation_packet.get("communication_profile") or {}
     nearby = build_nearby_heuristics(
         db,
         user,
@@ -769,6 +1119,40 @@ def nearby_recommendations(
         meal_type=request.meal_type,
         remaining_kcal=remaining_kcal,
     )
+    rerank_payload = rerank_candidates_sync(
+        provider if settings.eat_policy_llm_enabled else None,
+        task_label="nearby_recommendations",
+        meal_type=request.meal_type,
+        remaining_kcal=remaining_kcal,
+        memory_packet=recommendation_packet,
+        communication_profile=communication_profile,
+        candidates=[
+            {
+                "key": item.place_id or item.name,
+                "name": item.name,
+                "group": item.source,
+                "kcal_low": item.kcal_low,
+                "kcal_high": item.kcal_high,
+                "reason_factors": item.reason_factors,
+                "open_now": item.open_now,
+                "travel_minutes": item.travel_minutes,
+                "distance_meters": item.distance_meters,
+            }
+            for item in nearby.heuristic_items
+        ],
+    )
+    if rerank_payload["ordered_keys"]:
+        nearby_by_key = {item.place_id or item.name: item for item in nearby.heuristic_items}
+        reordered = [nearby_by_key[key] for key in rerank_payload["ordered_keys"] if key in nearby_by_key]
+        reordered.extend(item for item in nearby.heuristic_items if (item.place_id or item.name) not in rerank_payload["ordered_keys"])
+        nearby = nearby.model_copy(update={"heuristic_items": reordered})
+    if rerank_payload["reason_factors"]:
+        updated_items = []
+        for item in nearby.heuristic_items:
+            key = item.place_id or item.name
+            override = rerank_payload["reason_factors"].get(key)
+            updated_items.append(item.model_copy(update={"reason_factors": override[:4] if override else item.reason_factors}))
+        nearby = nearby.model_copy(update={"heuristic_items": updated_items})
     job = create_search_job(
         db,
         user,
@@ -782,9 +1166,34 @@ def nearby_recommendations(
         },
     )
     nearby = nearby.model_copy(update={"search_job_id": job.id})
+    nearby_message = (
+        rerank_payload["coach_message"]
+        or rerank_payload["hero_reason"]
+        or "Here is a fast nearby shortlist while I look for more precise options."
+    )
+    finish_task_run(
+        db,
+        task_run_id,
+        status="success",
+        result_summary={
+            "remaining_kcal": remaining_kcal,
+            "candidate_count": len(nearby.heuristic_items),
+            "llm_reranked": bool(rerank_payload["ordered_keys"]),
+            "job_id": job.id,
+            "execution_phase": "http_route",
+            "ingress_mode": "direct_api",
+            "memory_packet_present": bool(recommendation_packet),
+            "communication_profile_present": bool(communication_profile),
+            "feature_flag_source": "eat_policy_llm_enabled" if settings.eat_policy_llm_enabled else "deterministic_only",
+            "relevant_memory_slice": memory_slice_contract,
+            "recommendation_policy": rerank_payload.get("policy_contract") or {},
+            "two_stage_display": {"stage_1": "fast_shortlist", "stage_2": "hero_choice", "refining": True},
+            "llm_usage": _merge_llm_usage(memory_slice_usage, rerank_payload.get("provider_usage")),
+        },
+    )
     return StandardResponse(
-        coach_message="Here is a fast nearby shortlist while I look for more precise options.",
-        payload={"nearby": nearby.model_dump()},
+        coach_message=nearby_message,
+        payload={"nearby": nearby.model_dump(), "refining": True, "hero_choice": rerank_payload.get("policy_contract") or {}},
     )
 
 
@@ -1051,7 +1460,7 @@ def post_activity_adjustment(
     user=Depends(current_user),
 ) -> StandardResponse:
     row = create_activity_adjustment(db, user, request)
-    summary = build_day_summary(db, user, row.date)
+    summary = _build_response_summary(db, user, row.date)
     return StandardResponse(
         coach_message="Activity adjustment added.",
         summary=summary,
@@ -1070,7 +1479,7 @@ def patch_activity_adjustment(
         row = update_activity_adjustment(db, user, adjustment_id, request)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    summary = build_day_summary(db, user, row.date)
+    summary = _build_response_summary(db, user, row.date)
     return StandardResponse(
         coach_message="Activity adjustment updated.",
         summary=summary,
@@ -1089,7 +1498,7 @@ def remove_activity_adjustment(
         raise HTTPException(status_code=404, detail="Activity adjustment not found")
     target_date = row.date
     delete_activity_adjustment(db, user, adjustment_id)
-    summary = build_day_summary(db, user, target_date)
+    summary = _build_response_summary(db, user, target_date)
     return StandardResponse(
         coach_message="Activity adjustment deleted.",
         summary=summary,
@@ -1098,12 +1507,40 @@ def remove_activity_adjustment(
 
 @router.post(f"{settings.api_prefix}/eat-feed", response_model=StandardResponse)
 def eat_feed(
+    http_request: Request,
     request: EatFeedRequest,
     db: Session = Depends(get_db),
     user=Depends(current_user),
 ) -> StandardResponse:
+    provider = get_ai_provider()
+    trace_id, task_run_id = _start_observed_task(
+        db,
+        http_request,
+        user=user,
+        surface="today",
+        task_family="remaining_or_recommendation",
+        input_text=request.query or "",
+        input_metadata=request.model_dump(),
+        source_mode="text",
+        provider=provider,
+    )
     summary = build_day_summary(db, user, date.today())
-    feed = build_eat_feed(db, user, request, remaining_kcal=summary.remaining_kcal)
+    feed = build_eat_feed(db, user, request, remaining_kcal=summary.remaining_kcal, provider=provider)
+    finish_task_run(
+        db,
+        task_run_id,
+        status="success",
+        result_summary={
+            "remaining_kcal": summary.remaining_kcal,
+            "top_pick": feed.top_pick.title if feed.top_pick else None,
+            "smart_chip_count": len(feed.smart_chips),
+            "execution_phase": "http_route",
+            "ingress_mode": "direct_api",
+            "feature_flag_source": "eat_policy_llm_enabled" if settings.eat_policy_llm_enabled else "deterministic_only",
+            "recommendation_policy": feed.policy_contract,
+            "llm_usage": (feed.policy_contract or {}).get("llm_usage"),
+        },
+    )
     return StandardResponse(
         coach_message="Eat feed ready.",
         payload={"eat_feed": feed.model_dump()},
@@ -1149,7 +1586,7 @@ async def intake(
 
         if _is_auto_recordable(draft):
             log = confirm_draft(db, user, draft)
-            summary = build_day_summary(db, user, draft.date)
+            summary = _build_response_summary(db, user, draft.date, provider=provider)
             job = _maybe_queue_post_intake_job(
                 db,
                 user,
@@ -1301,7 +1738,7 @@ async def intake_video(
 
         if _is_auto_recordable(draft):
             log = confirm_draft(db, user, draft)
-            summary = build_day_summary(db, user, draft.date)
+            summary = _build_response_summary(db, user, draft.date, provider=provider)
             job = _maybe_queue_post_intake_job(
                 db,
                 user,
@@ -1449,7 +1886,7 @@ async def clarify_intake(
 
         if _is_auto_recordable(draft):
             log = confirm_draft(db, user, draft)
-            summary = build_day_summary(db, user, draft.date)
+            summary = _build_response_summary(db, user, draft.date, provider=provider)
             job = _maybe_queue_post_intake_job(
                 db,
                 user,
@@ -1558,7 +1995,7 @@ def confirm_intake(
     )
     try:
         log = confirm_draft(db, user, draft)
-        summary = build_day_summary(db, user, draft.date)
+        summary = _build_response_summary(db, user, draft.date)
         payload: dict[str, object] = {}
         job = _maybe_queue_post_intake_job(
             db,
@@ -1601,7 +2038,7 @@ def confirm_intake(
             ),
         )
         return StandardResponse(
-            coach_message="Meal confirmed.",
+            coach_message=_build_confirmation_message(draft, log),
             draft=draft_to_response(draft),
             log=log_to_response(log),
             summary=summary,
@@ -1643,7 +2080,7 @@ def post_manual_meal_log(
         event_at=request.event_at,
     )
     recommendation_outcome = attribute_recommendation_outcome(db, user, log)
-    summary = build_day_summary(db, user, log.date)
+    summary = _build_response_summary(db, user, log.date)
     return StandardResponse(
         coach_message="Manual meal logged.",
         log=log_to_response(log),
@@ -1676,7 +2113,7 @@ def patch_meal_log(
     return StandardResponse(
         coach_message="Meal log updated.",
         log=log_to_response(updated),
-        summary=build_day_summary(db, user, updated.date),
+        summary=_build_response_summary(db, user, updated.date),
         payload={"recommendation_correction": recommendation_correction or {}},
     )
 
@@ -1694,7 +2131,7 @@ def remove_meal_log(
     delete_log(db, log)
     return StandardResponse(
         coach_message="Meal log deleted.",
-        summary=build_day_summary(db, user, target_date),
+        summary=_build_response_summary(db, user, target_date),
     )
 
 
@@ -1704,7 +2141,9 @@ def day_summary(
     db: Session = Depends(get_db),
     user=Depends(current_user),
 ) -> StandardResponse:
-    return StandardResponse(coach_message="Day summary loaded.", summary=build_day_summary(db, user, date_value or date.today()))
+    provider = get_ai_provider()
+    summary, _ = _build_weekly_coaching_summary(db, user, target_date=date_value or date.today(), provider=provider)
+    return StandardResponse(coach_message="Day summary loaded.", summary=summary)
 
 
 @router.post(f"{settings.api_prefix}/weights", response_model=StandardResponse)
@@ -1723,44 +2162,179 @@ def log_weight(
     db.commit()
     db.refresh(entry)
     refresh_body_goal_calibration(db, user)
-    return StandardResponse(coach_message="Weight logged.", summary=build_day_summary(db, user, target_date))
+    return StandardResponse(coach_message="Weight logged.", summary=_build_response_summary(db, user, target_date))
 
 
 @router.get(f"{settings.api_prefix}/recommendations", response_model=StandardResponse)
 def recommendations(
+    http_request: Request,
     meal_type: str | None = None,
     db: Session = Depends(get_db),
     user=Depends(current_user),
 ) -> StandardResponse:
+    provider = get_ai_provider()
+    trace_id, task_run_id = _start_observed_task(
+        db,
+        http_request,
+        user=user,
+        surface="today",
+        task_family="remaining_or_recommendation",
+        input_text=meal_type or "",
+        input_metadata={"meal_type": meal_type},
+        source_mode="text",
+        provider=provider,
+    )
     summary = build_day_summary(db, user, date.today())
-    data = get_recommendations(db, user, meal_type, summary.remaining_kcal)
+    recommendation_packet = build_recommendation_memory_packet(db, user, meal_type, summary.remaining_kcal)
+    if settings.eat_policy_llm_enabled:
+        recommendation_packet = select_relevant_memory_slice_sync(
+            provider,
+            task_label="recommendations",
+            text=meal_type or "",
+            meal_type=meal_type,
+            memory_packet=recommendation_packet,
+        )
+    memory_slice_contract = recommendation_packet.pop("_relevant_memory_slice_contract", None)
+    memory_slice_usage = recommendation_packet.pop("_relevant_memory_slice_usage", None)
+    communication_profile = recommendation_packet.get("communication_profile") or {}
+    data = get_recommendations(
+        db,
+        user,
+        meal_type,
+        summary.remaining_kcal,
+        provider=provider if settings.eat_policy_llm_enabled else None,
+        memory_packet=recommendation_packet,
+        communication_profile=communication_profile,
+    )
     data.saved_place_options = [item.model_dump() for item in list_saved_places(db, user)]
-    return StandardResponse(coach_message="Recommendations ready.", recommendations=data)
+    recommendation_contract = data.policy_contract or {
+        "ordered_keys": [f"food:{item.food_id}" if item.food_id is not None else f"name:{item.name}" for item in data.items],
+        "hero_reason": data.hero_reason,
+        "coach_message": data.coach_message,
+        "strategy_label": data.strategy_label,
+        "stage": "deterministic_fallback",
+    }
+    finish_task_run(
+        db,
+        task_run_id,
+        status="success",
+        result_summary={
+            "remaining_kcal": summary.remaining_kcal,
+            "candidate_count": len(data.items),
+            "saved_place_count": len(data.saved_place_options),
+            "strategy_label": data.strategy_label,
+            "execution_phase": "http_route",
+            "ingress_mode": "direct_api",
+            "memory_packet_present": bool(recommendation_packet),
+            "communication_profile_present": bool(communication_profile),
+            "feature_flag_source": "eat_policy_llm_enabled" if settings.eat_policy_llm_enabled else "deterministic_only",
+            "relevant_memory_slice": memory_slice_contract,
+            "recommendation_policy": recommendation_contract,
+            "llm_usage": _merge_llm_usage(memory_slice_usage, recommendation_contract.get("llm_usage")),
+        },
+    )
+    return StandardResponse(coach_message=data.coach_message or "Recommendations ready.", recommendations=data)
 
 
 @router.post(f"{settings.api_prefix}/plans/day", response_model=StandardResponse)
 def plan_day(
+    http_request: Request,
     request: PlanRequest,
     db: Session = Depends(get_db),
     user=Depends(current_user),
 ) -> StandardResponse:
+    provider = get_ai_provider()
+    trace_id, task_run_id = _start_observed_task(
+        db,
+        http_request,
+        user=user,
+        surface="today",
+        task_family="planning",
+        input_text="day_plan",
+        input_metadata=request.model_dump(),
+        source_mode="text",
+        provider=provider,
+    )
     preference = get_or_create_preferences(db, user)
     overlay = build_day_summary(db, user, date.today()).recovery_overlay if request.apply_overlay else None
-    plan = build_day_plan(user.daily_calorie_target, preference=preference, overlay=overlay)
+    planning_packet = build_planning_memory_packet(db, user)
+    planning_packet = select_relevant_memory_slice_sync(
+        provider,
+        task_label="planning",
+        text="day_plan",
+        meal_type=None,
+        memory_packet=planning_packet,
+    )
+    planning_memory_contract = planning_packet.pop("_relevant_memory_slice_contract", None)
+    planning_memory_usage = planning_packet.pop("_relevant_memory_slice_usage", None)
+    communication_profile = planning_packet.get("communication_profile") or {}
+    plan = build_day_plan(
+        user.daily_calorie_target,
+        preference=preference,
+        overlay=overlay,
+        provider=provider,
+        planning_packet=planning_packet,
+        communication_profile=communication_profile,
+    )
+    finish_task_run(
+        db,
+        task_run_id,
+        status="success",
+        result_summary={
+            "target_kcal": plan.target_kcal,
+            "allocations": plan.allocations,
+            "used_overlay": bool(overlay),
+            "execution_phase": "http_route",
+            "ingress_mode": "direct_api",
+            "memory_packet_present": bool(planning_packet),
+            "communication_profile_present": bool(communication_profile),
+            "planning_copy_attempted": bool(provider is not None and planning_packet is not None),
+            "planning_copy_layer": "llm_planning_copy" if provider is not None and planning_packet is not None else "deterministic_only",
+            "relevant_memory_slice": planning_memory_contract,
+            "llm_usage": _merge_llm_usage(planning_memory_usage, plan.metadata.get("llm_usage")),
+        },
+    )
     return StandardResponse(coach_message=plan.coach_message, plan=plan)
 
 
 @router.post(f"{settings.api_prefix}/plans/compensation", response_model=StandardResponse)
 def plan_compensation(
+    http_request: Request,
     request: PlanRequest,
     db: Session = Depends(get_db),
     user=Depends(current_user),
 ) -> StandardResponse:
+    provider = get_ai_provider()
+    trace_id, task_run_id = _start_observed_task(
+        db,
+        http_request,
+        user=user,
+        surface="today",
+        task_family="compensation",
+        input_text="compensation_plan",
+        input_metadata=request.model_dump(),
+        source_mode="text",
+        provider=provider,
+    )
     preference = get_or_create_preferences(db, user)
+    planning_packet = build_planning_memory_packet(db, user)
+    planning_packet = select_relevant_memory_slice_sync(
+        provider,
+        task_label="compensation",
+        text=str(request.expected_extra_kcal),
+        meal_type=None,
+        memory_packet=planning_packet,
+    )
+    planning_memory_contract = planning_packet.pop("_relevant_memory_slice_contract", None)
+    planning_memory_usage = planning_packet.pop("_relevant_memory_slice_usage", None)
+    communication_profile = planning_packet.get("communication_profile") or {}
     compensation = build_compensation_plan(
         request.expected_extra_kcal,
         compensation_style=preference.compensation_style,
         base_target=user.daily_calorie_target,
+        provider=provider,
+        planning_packet=planning_packet,
+        communication_profile=communication_profile,
     )
 
     if request.apply_overlay and compensation.options:
@@ -1788,6 +2362,24 @@ def plan_compensation(
             db.add(event)
             db.commit()
 
+    finish_task_run(
+        db,
+        task_run_id,
+        status="success",
+        result_summary={
+            "option_count": len(compensation.options),
+            "expected_extra_kcal": request.expected_extra_kcal,
+            "apply_overlay": request.apply_overlay,
+            "execution_phase": "http_route",
+            "ingress_mode": "direct_api",
+            "memory_packet_present": bool(planning_packet),
+            "communication_profile_present": bool(communication_profile),
+            "planning_copy_attempted": bool(provider is not None and planning_packet is not None),
+            "planning_copy_layer": "llm_planning_copy" if provider is not None and planning_packet is not None else "deterministic_only",
+            "relevant_memory_slice": planning_memory_contract,
+            "llm_usage": _merge_llm_usage(planning_memory_usage, compensation.metadata.get("llm_usage")),
+        },
+    )
     return StandardResponse(coach_message=compensation.coach_message, compensation=compensation)
 
 
@@ -1947,7 +2539,468 @@ async def upload_attachment(
     )
 
 
+def _line_event_trace_id(base_trace_id: str, event: dict[str, object]) -> str:
+    message = event.get("message") if isinstance(event.get("message"), dict) else {}
+    suffix = message.get("id") or event.get("timestamp") or "event"
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{base_trace_id}:{suffix}"))
+
+
+def _record_line_ingress_observation(
+    db: Session,
+    *,
+    request_trace_id: str,
+    event: dict[str, object],
+    ingress_mode: str,
+) -> tuple[str, str]:
+    source = event.get("source") if isinstance(event.get("source"), dict) else {}
+    line_user_id = str(source.get("userId") or "")
+    message = event.get("message") if isinstance(event.get("message"), dict) else {}
+    is_canary, traffic_class = resolve_traffic_class(line_user_id=line_user_id, input_metadata={"surface": "line_webhook_ingress"})
+    event_trace_id = _line_event_trace_id(request_trace_id, event)
+    create_conversation_trace(
+        db,
+        trace_id=event_trace_id,
+        line_user_id=line_user_id or None,
+        surface="chat",
+        task_family="line_webhook_ingress",
+        source_mode=str(message.get("type") or "unknown"),
+        input_text=str(message.get("text") or "")[:2000],
+        input_metadata={"line_message_id": message.get("id"), "event_type": event.get("type"), "queue_mode": ingress_mode},
+        thread_id=source.get("groupId") or source.get("roomId"),
+        message_id=str(message.get("id") or ""),
+        is_canary=is_canary,
+        traffic_class=traffic_class,
+    )
+    route_layer_1, route_layer_2 = route_layers_for_task("line_webhook_ingress")
+    task_run_id = start_task_run(
+        db,
+        trace_id=event_trace_id,
+        task_family="line_webhook_ingress",
+        route_layer_1=route_layer_1,
+        route_layer_2=route_layer_2,
+        provider_name="ingress_control_plane",
+        model_name="line_signature_queue",
+        is_canary=is_canary,
+        traffic_class=traffic_class,
+        result_summary={"feature_flags": _feature_flags_for_task("line_webhook_ingress")},
+    )
+    return event_trace_id, task_run_id
+
+
+async def process_line_event_payload(
+    db: Session,
+    payload: dict[str, object],
+    *,
+    trace_id: str,
+    reply_token: str | None = None,
+) -> None:
+    event = payload or {}
+    if event.get("type") != "message":
+        return
+
+    source = event.get("source") if isinstance(event.get("source"), dict) else {}
+    line_user_id = str(source.get("userId") or "")
+    if not line_user_id:
+        return
+
+    user = get_or_create_user(db, line_user_id=line_user_id, display_name="LINE User")
+    provider = get_ai_provider()
+    message = event.get("message") if isinstance(event.get("message"), dict) else {}
+    reply_token_value = reply_token or event.get("replyToken")
+    message_type = str(message.get("type") or "")
+    event_trace_id = _line_event_trace_id(trace_id, event)
+
+    async def respond(
+        text: str | None = None,
+        *,
+        quick_reply: list[object] | None = None,
+        flex_message: dict[str, object] | None = None,
+        messages: list[dict[str, object]] | None = None,
+    ) -> None:
+        await send_line_response(
+            line_user_id=user.line_user_id,
+            reply_token=str(reply_token_value) if reply_token_value else None,
+            text=text,
+            quick_reply=quick_reply,
+            flex_message=flex_message,
+            messages=messages,
+        )
+
+    if message_type == "text":
+        text = str(message.get("text") or "").strip()
+        explicit_feedback = detect_explicit_feedback(text)
+        if explicit_feedback:
+            record_feedback_event(
+                db,
+                trace_id=event_trace_id,
+                user_id=user.id,
+                feedback_type=explicit_feedback["feedback_type"],
+                feedback_label=explicit_feedback["feedback_label"],
+                free_text=text,
+                severity=explicit_feedback["severity"],
+            )
+
+        correction = detect_chat_correction(text)
+        if correction:
+            apply_preference_correction(db, user, correction)
+            await respond("Preference updated. I will use that from now on.")
+            return
+
+        open_draft = _latest_open_draft(db, user)
+        if open_draft and _is_defer_text(text):
+            await respond("No problem. The draft is still there when you are ready.")
+            return
+        if open_draft and _is_confirm_text(text):
+            log = confirm_draft(db, user, open_draft)
+            attribute_recommendation_outcome(db, user, log)
+            maybe_queue_menu_precision_job(db, user, trace_id=event_trace_id, text=log.description_raw, log=log)
+            await respond(_build_confirmation_message(open_draft, log))
+            return
+        if open_draft and open_draft.status == "awaiting_clarification":
+            estimate = await _estimate_with_knowledge(
+                provider,
+                db=db,
+                user=user,
+                text=f"{open_draft.raw_input_text}\n{text}",
+                meal_type=open_draft.meal_type,
+                mode=open_draft.mode,
+                source_mode=open_draft.source_mode,
+                clarification_count=open_draft.clarification_count + 1,
+                attachments=open_draft.attachments,
+                metadata=open_draft.draft_context.get("source_metadata", {}) if open_draft.draft_context else {},
+            )
+            updated_draft = update_draft_with_clarification(db, open_draft, text, estimate)
+            if _is_auto_recordable(updated_draft):
+                log = confirm_draft(db, user, updated_draft)
+                attribute_recommendation_outcome(db, user, log)
+                maybe_queue_menu_precision_job(db, user, trace_id=event_trace_id, text=log.description_raw, log=log)
+                await respond(_build_confirmation_message(updated_draft, log))
+                return
+            reply_text, quick_reply = _build_draft_message(updated_draft)
+            await respond(reply_text, quick_reply=quick_reply, flex_message=_build_draft_flex_payload(updated_draft))
+            return
+
+        route_contract = await _route_text_task_hybrid(provider, text, open_draft_present=bool(open_draft))
+        task = str(route_contract.get("task") or "fallback_ambiguous")
+        task_confidence = float(route_contract.get("confidence") or 0.0)
+        trace_row = db.get(ConversationTrace, event_trace_id)
+        if trace_row is not None:
+            metadata = dict(trace_row.input_metadata or {})
+            metadata["structured_intent_route"] = route_contract
+            trace_row.input_metadata = metadata
+            db.add(trace_row)
+            db.commit()
+        if task_confidence < 0.45 or task == "fallback_ambiguous":
+            await respond(
+                "I can help log a meal, answer calorie questions, track weight, or suggest what to eat next.",
+                quick_reply=_disambiguation_options(),
+            )
+            return
+
+        if task == "remaining_or_recommendation":
+            lowered = text.lower()
+            if any(token in lowered for token in ["nearby", "where", "哪裡", "附近"]):
+                await respond("Share a location, or open Eat to browse nearby options.", quick_reply=_location_route_options())
+                return
+            energy_context = build_energy_context(db, user)
+            wants_recommendations = not looks_like_remaining_calorie_question(text) or any(
+                token in lowered for token in ["recommend", "suggest", "吃什麼", "推薦"]
+            )
+            if wants_recommendations:
+                summary = energy_context.summary
+                recommendation_packet = build_recommendation_memory_packet(db, user, None, summary.remaining_kcal)
+                if provider is not None:
+                    recommendation_packet = select_relevant_memory_slice_sync(
+                        provider,
+                        task_label="remaining_or_recommendation",
+                        text=text,
+                        meal_type=None,
+                        memory_packet=recommendation_packet,
+                    )
+                communication_profile = recommendation_packet.get("communication_profile") or {}
+                recs = get_recommendations(
+                    db,
+                    user,
+                    None,
+                    summary.remaining_kcal,
+                    provider=provider,
+                    memory_packet=recommendation_packet,
+                    communication_profile=communication_profile,
+                )
+                lines = [f"Today you have about {summary.remaining_kcal} kcal left."]
+                for item in recs.items[:3]:
+                    lines.append(f"- {item.name} ({item.kcal_low}-{item.kcal_high} kcal)")
+                await respond("\n".join(lines))
+            else:
+                result = answer_calorie_question(text, allow_search=False, context=energy_context)
+                await respond(result.answer)
+            return
+
+        if task == "future_event_probe":
+            parsed_event = parse_future_meal_event_text(text)
+            if not parsed_event:
+                await respond("Tell me the date and meal, for example 'Dinner with friends on Saturday, 900 kcal'.")
+                return
+            meal_event = create_meal_event(
+                db,
+                user,
+                MealEventRequest(
+                    event_date=parsed_event.event_date,
+                    meal_type=parsed_event.meal_type,
+                    title=parsed_event.title,
+                    expected_kcal=parsed_event.expected_kcal,
+                    notes=parsed_event.notes,
+                    source="chat",
+                ),
+            )
+            await respond(f"Planned {meal_event.title} on {meal_event.event_date.isoformat()} at about {meal_event.expected_kcal} kcal.")
+            return
+
+        if task == "weekly_drift_probe":
+            summary, _ = _build_weekly_coaching_summary(db, user, target_date=date.today(), provider=provider)
+            if summary.should_offer_weekly_recovery:
+                await respond(summary.weekly_coach_message or f"You are about {summary.weekly_drift_kcal} kcal over plan this week. Open Progress for a recovery plan.")
+            else:
+                await respond(summary.weekly_coach_message or "You are still within a manageable range this week.")
+            return
+
+        if task == "weight_log":
+            match = re.search(r"(\d{2,3}(?:\.\d)?)", text)
+            if not match:
+                await respond("Send a weight like 72.4 and I will log it.")
+                return
+            value = float(match.group(1))
+            weight_row = db.scalar(select(WeightLog).where(WeightLog.user_id == user.id, WeightLog.date == date.today()))
+            if weight_row:
+                weight_row.weight = value
+            else:
+                weight_row = WeightLog(user_id=user.id, date=date.today(), weight=value)
+            db.add(weight_row)
+            db.commit()
+            refresh_body_goal_calibration(db, user)
+            await respond(f"Logged {value} kg.")
+            return
+
+        if task == "nutrition_or_food_qa":
+            result = answer_calorie_question(text, allow_search=True, context=build_energy_context(db, user))
+            await respond(result.answer)
+            return
+
+        if task == "meal_log_correction":
+            record_feedback_event(
+                db,
+                trace_id=event_trace_id,
+                user_id=user.id,
+                feedback_type="implicit_negative",
+                feedback_label="repeated_correction",
+                free_text=text,
+                severity="medium",
+            )
+            target_log = db.scalar(select(MealLog).where(MealLog.user_id == user.id).order_by(MealLog.event_at.desc(), MealLog.created_at.desc()))
+            if not target_log:
+                await respond("I could not find a recent meal to correct yet.")
+                return
+            estimate = await _estimate_with_knowledge(
+                provider,
+                db=db,
+                user=user,
+                text=f"{target_log.description_raw}\n{text}",
+                meal_type=target_log.meal_type,
+                mode="standard",
+                source_mode=target_log.source_mode,
+                clarification_count=0,
+                attachments=[],
+                metadata={},
+            )
+            draft = create_correction_preview(db, user, target_log, correction_text=text, estimate=estimate)
+            reply_text, quick_reply = _build_draft_message(draft)
+            await respond(reply_text, quick_reply=quick_reply, flex_message=_build_draft_flex_payload(draft))
+            return
+
+        if task == "preference_or_memory_correction":
+            await respond("Tell me the preference change directly and I will update it.")
+            return
+
+        if task == "meta_help":
+            await respond("I can log meals, answer nutrition questions, track weight, plan ahead, and suggest nearby food.")
+            return
+
+        meal_request = IntakeRequest(
+            text=text,
+            meal_type=infer_meal_type(text),
+            source_mode="text",
+            mode="standard",
+            event_at=utcnow(),
+            metadata={"channel": "line"},
+        )
+        estimate = await _estimate_with_knowledge(
+            provider,
+            db=db,
+            user=user,
+            text=meal_request.text,
+            meal_type=meal_request.meal_type,
+            mode=meal_request.mode,
+            source_mode=meal_request.source_mode,
+            clarification_count=0,
+            attachments=[],
+            metadata=meal_request.metadata,
+        )
+        draft = create_or_update_draft(db, user, meal_request, estimate)
+        if _is_auto_recordable(draft):
+            log = confirm_draft(db, user, draft)
+            attribute_recommendation_outcome(db, user, log)
+            maybe_queue_menu_precision_job(db, user, trace_id=event_trace_id, text=log.description_raw, log=log)
+        reply_text, quick_reply = _build_draft_message(draft)
+        await respond(reply_text, quick_reply=quick_reply, flex_message=_build_draft_flex_payload(draft))
+        return
+
+    if message_type == "location":
+        location_context = resolve_location_context(
+            db,
+            user,
+            {
+                "mode": "geolocation",
+                "lat": message.get("latitude"),
+                "lng": message.get("longitude"),
+                "label": message.get("title") or "Current area",
+                "query": message.get("address") or message.get("title") or "Current area",
+            },
+        )
+        summary = build_day_summary(db, user, date.today())
+        nearby = build_nearby_heuristics(db, user, location_context=location_context, meal_type=None, remaining_kcal=summary.remaining_kcal)
+        job = create_search_job(
+            db,
+            user,
+            job_type="nearby_places",
+            request_payload={**location_context, "remaining_kcal": summary.remaining_kcal, "notify_on_complete": True, "trace_id": event_trace_id},
+        )
+        lines = [f"Fast shortlist for {nearby.location_context_used}:"]
+        for item in nearby.heuristic_items[:3]:
+            lines.append(f"- {item.name} ({item.kcal_low}-{item.kcal_high} kcal)")
+        lines.append(f"I also queued a precise nearby search in the background. Job {job.id[:8]}.")
+        await respond("\n".join(lines))
+        return
+
+    if message_type in {"image", "audio", "video"}:
+        content, attachment = await fetch_line_content(str(message.get("id")), line_user_id=line_user_id)
+        text = ""
+        source_mode = "image" if message_type == "image" else "audio" if message_type == "audio" else "video"
+        if message_type == "audio":
+            text = await provider.transcribe_audio(content=content, mime_type=attachment.get("mime_type"))
+        intake_request = IntakeRequest(
+            text=text,
+            meal_type="meal",
+            source_mode=source_mode,
+            mode="standard",
+            attachments=[attachment_for_persistence(attachment)],
+            event_at=utcnow(),
+            metadata={"channel": "line"},
+        )
+        if source_mode == "video":
+            intake_request = enrich_video_intake_request(intake_request, source_label="line_video")
+        estimate = await _estimate_with_knowledge(
+            provider,
+            db=db,
+            user=user,
+            text=intake_request.text,
+            meal_type=intake_request.meal_type,
+            mode=intake_request.mode,
+            source_mode=intake_request.source_mode,
+            clarification_count=0,
+            attachments=[attachment],
+            metadata=intake_request.metadata,
+        )
+        draft = create_or_update_draft(db, user, intake_request, estimate)
+        if _is_auto_recordable(draft):
+            log = confirm_draft(db, user, draft)
+            attribute_recommendation_outcome(db, user, log)
+            _maybe_queue_post_intake_job(
+                db,
+                user,
+                trace_id=event_trace_id,
+                source_mode=log.source_mode,
+                text=log.description_raw,
+                meal_type=log.meal_type,
+                attachments=draft.attachments,
+                metadata=draft.draft_context or {},
+                log=log,
+            )
+        elif source_mode == "video":
+            _maybe_queue_post_intake_job(
+                db,
+                user,
+                trace_id=event_trace_id,
+                source_mode="video",
+                text=intake_request.text,
+                meal_type=intake_request.meal_type,
+                attachments=intake_request.attachments,
+                metadata=intake_request.metadata,
+                draft=draft,
+                notify_on_complete=False,
+            )
+        reply_text, quick_reply = _build_draft_message(draft)
+        await respond(reply_text, quick_reply=quick_reply, flex_message=_build_draft_flex_payload(draft))
+
+
 @router.post("/webhooks/line")
+async def line_webhook_enqueue(
+    request: Request,
+    x_line_signature: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    body = await request.body()
+    if not verify_line_signature(body, x_line_signature):
+        raise HTTPException(status_code=401, detail="Invalid LINE signature")
+
+    payload = await request.json()
+    request_trace_id = get_request_trace_id(request)
+
+    for event in payload.get("events", []):
+        if event.get("type") != "message":
+            continue
+        source = event.get("source") if isinstance(event.get("source"), dict) else {}
+        line_user_id = str(source.get("userId") or "")
+        if not line_user_id:
+            continue
+        message = event.get("message") if isinstance(event.get("message"), dict) else {}
+        event_trace_id, task_run_id = _record_line_ingress_observation(
+            db,
+            request_trace_id=request_trace_id,
+            event=event,
+            ingress_mode="ack_fast",
+        )
+        _, created = enqueue_line_event(
+            db,
+            event=event,
+            line_user_id=line_user_id,
+            reply_token=str(event.get("replyToken") or "") or None,
+            trace_id=event_trace_id,
+        )
+        enqueue_outcome = "queued" if created else "duplicate"
+        finish_task_run(
+            db,
+            task_run_id,
+            status="success",
+            result_summary={
+                "execution_phase": "webhook_ingress",
+                "ingress_mode": "ack_fast",
+                "queue_source": "line_webhook",
+                "enqueue_outcome": enqueue_outcome,
+                "line_message_type": message.get("type"),
+            },
+        )
+        record_outcome_event(
+            db,
+            trace_id=event_trace_id,
+            task_family="line_webhook_event",
+            outcome_type=enqueue_outcome,
+            payload={"message_type": message.get("type"), "event_mode": "ack_fast"},
+        )
+
+    return {"ok": True}
+
+
+@router.post("/webhooks/line/_legacy_inline")
 async def line_webhook(
     request: Request,
     x_line_signature: str | None = Header(default=None),
@@ -1958,11 +3011,46 @@ async def line_webhook(
         raise HTTPException(status_code=401, detail="Invalid LINE signature")
 
     payload = await request.json()
-    provider = get_ai_provider()
+    request_trace_id = get_request_trace_id(request)
 
     for event in payload.get("events", []):
         if event.get("type") != "message":
             continue
+        source = event.get("source") if isinstance(event.get("source"), dict) else {}
+        if not str(source.get("userId") or ""):
+            continue
+        event_trace_id, ingress_task_run_id = _record_line_ingress_observation(
+            db,
+            request_trace_id=request_trace_id,
+            event=event,
+            ingress_mode="legacy_inline",
+        )
+        finish_task_run(
+            db,
+            ingress_task_run_id,
+            status="success",
+            result_summary={
+                "execution_phase": "webhook_ingress",
+                "ingress_mode": "legacy_inline",
+                "queue_source": "line_webhook_legacy_inline",
+                "enqueue_outcome": "processed_inline",
+                "line_message_type": (event.get("message") or {}).get("type"),
+            },
+        )
+        record_outcome_event(
+            db,
+            trace_id=event_trace_id,
+            task_family="line_webhook_event",
+            outcome_type="processed_inline",
+            payload={"event_mode": "legacy_inline", "message_type": (event.get("message") or {}).get("type")},
+        )
+        await process_line_event_payload(
+            db,
+            event,
+            trace_id=request_trace_id,
+            reply_token=str(event.get("replyToken") or "") or None,
+        )
+        continue
 
         source = event.get("source") or {}
         line_user_id = source.get("userId")
@@ -2056,7 +3144,17 @@ async def line_webhook(
                 )
                 if wants_recommendations:
                     summary = energy_context.summary
-                    recs = get_recommendations(db, user, None, summary.remaining_kcal)
+                    recommendation_packet = build_recommendation_memory_packet(db, user, None, summary.remaining_kcal)
+                    communication_profile = recommendation_packet.get("communication_profile") or {}
+                    recs = get_recommendations(
+                        db,
+                        user,
+                        None,
+                        summary.remaining_kcal,
+                        provider=provider,
+                        memory_packet=recommendation_packet,
+                        communication_profile=communication_profile,
+                    )
                     lines = [f"Today you have about {summary.remaining_kcal} kcal left."]
                     for item in recs.items[:3]:
                         lines.append(f"- {item.name} ({item.kcal_low}-{item.kcal_high} kcal)")
